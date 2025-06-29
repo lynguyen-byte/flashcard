@@ -3,10 +3,23 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, addDoc, doc, deleteDoc, onSnapshot, query, where } from 'firebase/firestore';
 
-// Define Firebase config and app ID from global variables
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+// Define Firebase config from Vercel Environment Variables
+// Vercel environment variables are exposed to the browser if prefixed with REACT_APP_ (for Create React App based builds)
+// or NEXT_PUBLIC_ (for Next.js based builds). Assuming a standard React build, REACT_APP_ is used.
+const firebaseConfig = {
+  apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
+  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.REACT_APP_FIREBASE_APP_ID
+};
+
+// Use a distinct ID for Firestore collection paths when deploying to Vercel
+// This value should be set as REACT_APP_FIRESTORE_APP_NAMESPACE in Vercel environment variables,
+// ideally to your Firebase Project ID to ensure uniqueness across deployments.
+const firestoreAppNamespace = process.env.REACT_APP_FIRESTORE_APP_NAMESPACE || 'default-vercel-app';
+
 
 // Main App Component
 const App = () => {
@@ -23,6 +36,15 @@ const App = () => {
     useEffect(() => {
         const initFirebase = async () => {
             try {
+                // Check if Firebase config is loaded
+                if (!firebaseConfig.apiKey) {
+                    console.error("Firebase configuration is missing. Please check Vercel environment variables.");
+                    setMessage('Lỗi cấu hình Firebase. Vui lòng kiểm tra biến môi trường.');
+                    setMessageType('error');
+                    setLoading(false);
+                    return;
+                }
+
                 const app = initializeApp(firebaseConfig);
                 const authInstance = getAuth(app);
                 const dbInstance = getFirestore(app);
@@ -30,11 +52,10 @@ const App = () => {
                 setAuth(authInstance);
                 setDb(dbInstance);
 
-                if (initialAuthToken) {
-                    await signInWithCustomToken(authInstance, initialAuthToken);
-                } else {
-                    await signInAnonymously(authInstance);
-                }
+                // For Vercel deployment, __initial_auth_token is not available.
+                // We'll sign in anonymously or you can implement other Firebase auth methods here.
+                await signInAnonymously(authInstance);
+
 
                 const unsubscribe = onAuthStateChanged(authInstance, (user) => {
                     if (user) {
@@ -130,10 +151,10 @@ const App = () => {
 
             <div className="w-full max-w-4xl bg-white p-8 rounded-xl shadow-2xl">
                 {currentView === 'manage' && db && auth && userId && (
-                    <ManageVocabulary db={db} auth={auth} userId={userId} showMessage={showMessage} isTeacherMode={isTeacherMode} />
+                    <ManageVocabulary db={db} auth={auth} userId={userId} showMessage={showMessage} isTeacherMode={isTeacherMode} firestoreAppNamespace={firestoreAppNamespace} />
                 )}
                 {(currentView === 'review' || currentView === 'test' || currentView === 'flipcard') && db && auth && userId && (
-                    <ReviewSection db={db} auth={auth} userId={userId} showMessage={showMessage} setCurrentView={setCurrentView} currentView={currentView} />
+                    <ReviewSection db={db} auth={auth} userId={userId} showMessage={showMessage} setCurrentView={setCurrentView} currentView={currentView} firestoreAppNamespace={firestoreAppNamespace} />
                 )}
             </div>
         </div>
@@ -141,7 +162,7 @@ const App = () => {
 };
 
 // Component to manage vocabulary (add, import, list)
-const ManageVocabulary = ({ db, auth, userId, showMessage, isTeacherMode }) => {
+const ManageVocabulary = ({ db, auth, userId, showMessage, isTeacherMode, firestoreAppNamespace }) => {
     const [privateLessons, setPrivateLessons] = useState([]);
     const [publicLessons, setPublicLessons] = useState([]);
     const [allFlashcards, setAllFlashcards] = useState([]); // Store all flashcards (private and public)
@@ -156,10 +177,10 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, isTeacherMode }) => {
 
     // Fetch lessons and flashcards
     useEffect(() => {
-        if (!db || !userId) return;
+        if (!db || !userId || !firestoreAppNamespace) return;
 
         // Listener for private lessons
-        const privateLessonsQuery = query(collection(db, `artifacts/${appId}/users/${userId}/lessons`));
+        const privateLessonsQuery = query(collection(db, `artifacts/${firestoreAppNamespace}/users/${userId}/lessons`));
         const unsubscribePrivateLessons = onSnapshot(privateLessonsQuery, (snapshot) => {
             const lessonsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isPublic: false }));
             setPrivateLessons(lessonsData);
@@ -169,7 +190,7 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, isTeacherMode }) => {
         });
 
         // Listener for public lessons
-        const publicLessonsQuery = query(collection(db, `artifacts/${appId}/shared_lessons`));
+        const publicLessonsQuery = query(collection(db, `artifacts/${firestoreAppNamespace}/shared_lessons`));
         const unsubscribePublicLessons = onSnapshot(publicLessonsQuery, (snapshot) => {
             const lessonsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isPublic: true }));
             setPublicLessons(lessonsData);
@@ -179,7 +200,7 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, isTeacherMode }) => {
         });
 
         // Listener for private flashcards
-        const privateFlashcardsQuery = query(collection(db, `artifacts/${appId}/users/${userId}/flashcards`));
+        const privateFlashcardsQuery = query(collection(db, `artifacts/${firestoreAppNamespace}/users/${userId}/flashcards`));
         const unsubscribePrivateFlashcards = onSnapshot(privateFlashcardsQuery, (snapshot) => {
             const cardsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isPublic: false }));
             // Merge with public flashcards for display
@@ -193,7 +214,7 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, isTeacherMode }) => {
         });
 
         // Listener for public flashcards
-        const publicFlashcardsQuery = query(collection(db, `artifacts/${appId}/shared_flashcards`));
+        const publicFlashcardsQuery = query(collection(db, `artifacts/${firestoreAppNamespace}/shared_flashcards`));
         const unsubscribePublicFlashcards = onSnapshot(publicFlashcardsQuery, (snapshot) => {
             const cardsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isPublic: true }));
             // Merge with private flashcards for display
@@ -212,7 +233,7 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, isTeacherMode }) => {
             unsubscribePrivateFlashcards();
             unsubscribePublicFlashcards();
         };
-    }, [db, userId, showMessage]);
+    }, [db, userId, showMessage, firestoreAppNamespace]);
 
     // Set default selected lesson if available and not already set
     useEffect(() => {
@@ -234,12 +255,12 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, isTeacherMode }) => {
 
     // Handle adding a new lesson
     const handleAddLesson = async () => {
-        if (!newLessonName.trim() || !db || !userId) {
-            showMessage('Tên bài học không được trống.', 'error');
+        if (!newLessonName.trim() || !db || !userId || !firestoreAppNamespace) {
+            showMessage('Tên bài học không được trống và Firebase chưa sẵn sàng.', 'error');
             return;
         }
 
-        const lessonCollectionPath = isNewLessonPublic ? `artifacts/${appId}/shared_lessons` : `artifacts/${appId}/users/${userId}/lessons`;
+        const lessonCollectionPath = isNewLessonPublic ? `artifacts/${firestoreAppNamespace}/shared_lessons` : `artifacts/${firestoreAppNamespace}/users/${userId}/lessons`;
         try {
             await addDoc(collection(db, lessonCollectionPath), {
                 name: newLessonName.trim(),
@@ -257,7 +278,7 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, isTeacherMode }) => {
 
     // Handle adding a single flashcard
     const handleAddFlashcard = async () => {
-        if (!englishWord.trim() || !vietnameseWord.trim() || !selectedLessonId || !db || !userId) {
+        if (!englishWord.trim() || !vietnameseWord.trim() || !selectedLessonId || !db || !userId || !firestoreAppNamespace) {
             showMessage('Vui lòng điền đầy đủ từ vựng và chọn bài học.', 'error');
             return;
         }
@@ -267,7 +288,7 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, isTeacherMode }) => {
              showMessage('Bạn không có quyền thêm flashcard vào bài học công khai.', 'error');
              return;
         }
-        const flashcardCollectionPath = isPublicCard ? `artifacts/${appId}/shared_flashcards` : `artifacts/${appId}/users/${userId}/flashcards`;
+        const flashcardCollectionPath = isPublicCard ? `artifacts/${firestoreAppNamespace}/shared_flashcards` : `artifacts/${firestoreAppNamespace}/users/${userId}/flashcards`;
 
         try {
             await addDoc(collection(db, flashcardCollectionPath), {
@@ -289,7 +310,7 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, isTeacherMode }) => {
 
     // Handle bulk import of flashcards
     const handleBulkImport = async () => {
-        if (!bulkText.trim() || !bulkLessonId || !db || !userId) {
+        if (!bulkText.trim() || !bulkLessonId || !db || !userId || !firestoreAppNamespace) {
             showMessage('Vui lòng nhập văn bản và chọn bài học.', 'error');
             return;
         }
@@ -299,7 +320,7 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, isTeacherMode }) => {
              showMessage('Bạn không có quyền thêm flashcard vào bài học công khai.', 'error');
              return;
         }
-        const flashcardCollectionPath = isPublicBulkCard ? `artifacts/${appId}/shared_flashcards` : `artifacts/${appId}/users/${userId}/flashcards`;
+        const flashcardCollectionPath = isPublicBulkCard ? `artifacts/${firestoreAppNamespace}/shared_flashcards` : `artifacts/${firestoreAppNamespace}/users/${userId}/flashcards`;
 
         const lines = bulkText.split('\n').filter(line => line.trim() !== '');
         const newFlashcards = [];
@@ -356,7 +377,7 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, isTeacherMode }) => {
                         }
                     ],
                 };
-                const apiKey = "";
+                const apiKey = ""; // API key is handled by the environment, keep it empty string.
                 const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
 
                 const response = await fetch(apiUrl, {
@@ -386,14 +407,14 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, isTeacherMode }) => {
 
     // Delete lesson and associated flashcards
     const handleDeleteLesson = async (lessonId, isPublicLesson) => {
-        if (!db || !userId) return;
+        if (!db || !userId || !firestoreAppNamespace) return;
 
         if (isPublicLesson && !isTeacherMode) {
             showMessage('Bạn không có quyền xóa bài học công khai.', 'error');
             return;
         }
-        const collectionPath = isPublicLesson ? `artifacts/${appId}/shared_lessons` : `artifacts/${appId}/users/${userId}/lessons`;
-        const flashcardCollectionPath = isPublicLesson ? `artifacts/${appId}/shared_flashcards` : `artifacts/${appId}/users/${userId}/flashcards`;
+        const collectionPath = isPublicLesson ? `artifacts/${firestoreAppNamespace}/shared_lessons` : `artifacts/${firestoreAppNamespace}/users/${userId}/lessons`;
+        const flashcardCollectionPath = isPublicLesson ? `artifacts/${firestoreAppNamespace}/shared_flashcards` : `artifacts/${firestoreAppNamespace}/users/${userId}/flashcards`;
 
         const userConfirmed = await new Promise(resolve => {
             const confirmModal = document.createElement('div');
@@ -440,14 +461,14 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, isTeacherMode }) => {
 
     // Delete a single flashcard
     const handleDeleteFlashcard = async (cardId, isPublicCard) => {
-        if (!db || !userId) return;
+        if (!db || !userId || !firestoreAppNamespace) return;
 
         if (isPublicCard && !isTeacherMode) {
             showMessage('Bạn không có quyền xóa flashcard công khai.', 'error');
             return;
         }
 
-        const flashcardCollectionPath = isPublicCard ? `artifacts/${appId}/shared_flashcards` : `artifacts/${appId}/users/${userId}/flashcards`;
+        const flashcardCollectionPath = isPublicCard ? `artifacts/${firestoreAppNamespace}/shared_flashcards` : `artifacts/${firestoreAppNamespace}/users/${userId}/flashcards`;
 
         const userConfirmed = await new Promise(resolve => {
             const confirmModal = document.createElement('div');
@@ -730,7 +751,7 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, isTeacherMode }) => {
 };
 
 // Component for Review Configuration and starting tests
-const ReviewSection = ({ db, auth, userId, showMessage, setCurrentView, currentView }) => {
+const ReviewSection = ({ db, auth, userId, showMessage, setCurrentView, currentView, firestoreAppNamespace }) => {
     const [privateLessons, setPrivateLessons] = useState([]);
     const [publicLessons, setPublicLessons] = useState([]);
     const [allFlashcards, setAllFlashcards] = useState([]);
@@ -744,10 +765,10 @@ const ReviewSection = ({ db, auth, userId, showMessage, setCurrentView, currentV
 
     // Fetch lessons and flashcards for review configuration
     useEffect(() => {
-        if (!db || !userId) return;
+        if (!db || !userId || !firestoreAppNamespace) return;
 
         // Listener for private lessons
-        const privateLessonsQuery = query(collection(db, `artifacts/${appId}/users/${userId}/lessons`));
+        const privateLessonsQuery = query(collection(db, `artifacts/${firestoreAppNamespace}/users/${userId}/lessons`));
         const unsubscribePrivateLessons = onSnapshot(privateLessonsQuery, (snapshot) => {
             const lessonsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), type: 'private' }));
             setPrivateLessons(lessonsData);
@@ -757,6 +778,540 @@ const ReviewSection = ({ db, auth, userId, showMessage, setCurrentView, currentV
         });
 
         // Listener for public lessons
-        const publicLessonsQuery = query(collection(db, `artifacts/${appId}/shared_lessons`));
+        const publicLessonsQuery = query(collection(db, `artifacts/${firestoreAppNamespace}/shared_lessons`));
         const unsubscribePublicLessons = onSnapshot(publicLessonsQuery, (snapshot) => {
-            const lessonsD
+            const lessonsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), type: 'public' }));
+            setPublicLessons(lessonsData);
+        }, (error) => {
+            console.error("Error loading public lessons for review:", error);
+            showMessage('Không thể tải bài học công khai cho phần ôn tập.', 'error');
+        });
+
+        // Listener for all flashcards (private and public)
+        const privateFlashcardsQuery = query(collection(db, `artifacts/${firestoreAppNamespace}/users/${userId}/flashcards`));
+        const unsubscribePrivateFlashcards = onSnapshot(privateFlashcardsQuery, (snapshot) => {
+            const privateCards = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isPublic: false }));
+            setAllFlashcards(prev => {
+                const publicCards = prev.filter(card => card.isPublic);
+                return [...publicCards, ...privateCards];
+            });
+        }, (error) => {
+            console.error("Error loading private flashcards for review:", error);
+            showMessage('Không thể tải flashcard cá nhân cho phần ôn tập.', 'error');
+        });
+
+        const publicFlashcardsQuery = query(collection(db, `artifacts/${firestoreAppNamespace}/shared_flashcards`));
+        const unsubscribePublicFlashcards = onSnapshot(publicFlashcardsQuery, (snapshot) => {
+            const publicCards = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isPublic: true }));
+            setAllFlashcards(prev => {
+                const privateCards = prev.filter(card => !card.isPublic);
+                return [...privateCards, ...publicCards];
+            });
+        }, (error) => {
+            console.error("Error loading public flashcards for review:", error);
+            showMessage('Không thể tải flashcard công khai cho phần ôn tập.', 'error');
+        });
+
+
+        return () => {
+            unsubscribePrivateLessons();
+            unsubscribePublicLessons();
+            unsubscribePrivateFlashcards();
+            unsubscribePublicFlashcards();
+        };
+    }, [db, userId, showMessage, firestoreAppNamespace]);
+
+    // Handle private lesson selection (multi-select)
+    const handlePrivateLessonSelection = (e) => {
+        const { value, checked } = e.target;
+        if (checked) {
+            setSelectedPrivateLessonIds(prev => [...prev, value]);
+        } else {
+            setSelectedPrivateLessonIds(prev => prev.filter(id => id !== value));
+        }
+    };
+
+    // Handle public lesson selection (multi-select)
+    const handlePublicLessonSelection = (e) => {
+        const { value, checked } = e.target;
+        if (checked) {
+            setSelectedPublicLessonIds(prev => [...prev, value]);
+        } else {
+            setSelectedPublicLessonIds(prev => prev.filter(id => id !== value));
+        }
+    };
+
+
+    // Prepare and start the test/flip card session
+    const startReviewSession = (useLastTest = false) => {
+        let cardsToUse = [];
+
+        if (useLastTest && lastTestFlashcards.length > 0) {
+            cardsToUse = [...lastTestFlashcards].sort(() => 0.5 - Math.random()); // Reshuffle
+            showMessage('Đang làm lại bài kiểm tra cũ với thứ tự mới.', 'info');
+        } else {
+            // Combine flashcards from selected private and public lessons
+            let filteredCards = allFlashcards.filter(card =>
+                (card.isPublic && selectedPublicLessonIds.includes(card.lessonId)) ||
+                (!card.isPublic && selectedPrivateLessonIds.includes(card.lessonId))
+            );
+
+            if (filteredCards.length === 0) {
+                showMessage('Không có từ vựng nào trong các bài học đã chọn.', 'error');
+                return;
+            }
+
+            const shuffledCards = filteredCards.sort(() => 0.5 - Math.random());
+            cardsToUse = shuffledCards.slice(0, Math.min(numQuestions, shuffledCards.length));
+
+            if (cardsToUse.length === 0) {
+                showMessage('Không đủ từ vựng để tạo bài ôn tập/kiểm tra với số lượng yêu cầu.', 'error');
+                return;
+            }
+            setLastTestFlashcards(cardsToUse);
+            showMessage('Bắt đầu bài kiểm tra mới.', 'success');
+        }
+
+        setTestFlashcards(cardsToUse);
+        if (testMode === 'flip-card') {
+            setCurrentView('flipcard');
+        } else {
+            setCurrentView('test');
+        }
+    };
+
+    return (
+        <div className="p-6 rounded-lg shadow-inner bg-purple-50">
+            <h2 className="text-2xl font-semibold text-purple-700 mb-4">Cấu hình Ôn tập</h2>
+
+            <div className="mb-6">
+                <label className="block text-gray-700 text-sm font-bold mb-2">
+                    Chọn Bài học Cá nhân của bạn:
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-48 overflow-y-auto border border-purple-200 rounded-md p-3 bg-white">
+                    {privateLessons.length === 0 ? (
+                        <p className="text-gray-500 col-span-full">Chưa có bài học cá nhân nào.</p>
+                    ) : (
+                        privateLessons.map(lesson => (
+                            <label key={lesson.id} className="inline-flex items-center text-gray-700">
+                                <input
+                                    type="checkbox"
+                                    value={lesson.id}
+                                    checked={selectedPrivateLessonIds.includes(lesson.id)}
+                                    onChange={handlePrivateLessonSelection}
+                                    className="form-checkbox h-5 w-5 text-purple-600 rounded"
+                                />
+                                <span className="ml-2">{lesson.name}</span>
+                            </label>
+                        ))
+                    )}
+                </div>
+            </div>
+
+            <div className="mb-6">
+                <label className="block text-gray-700 text-sm font-bold mb-2">
+                    Chọn Bài học Công khai:
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-48 overflow-y-auto border border-purple-200 rounded-md p-3 bg-white">
+                    {publicLessons.length === 0 ? (
+                        <p className="text-gray-500 col-span-full">Chưa có bài học công khai nào.</p>
+                    ) : (
+                        publicLessons.map(lesson => (
+                            <label key={lesson.id} className="inline-flex items-center text-gray-700">
+                                <input
+                                    type="checkbox"
+                                    value={lesson.id}
+                                    checked={selectedPublicLessonIds.includes(lesson.id)}
+                                    onChange={handlePublicLessonSelection}
+                                    className="form-checkbox h-5 w-5 text-purple-600 rounded"
+                                />
+                                <span className="ml-2">{lesson.name} ({lesson.ownerId === userId ? 'Của bạn' : 'Khác'})</span>
+                            </label>
+                        ))
+                    )}
+                </div>
+            </div>
+
+            <div className="mb-6">
+                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="numQuestions">
+                    Số lượng câu hỏi / thẻ muốn ôn tập:
+                </label>
+                <input
+                    type="number"
+                    id="numQuestions"
+                    min="1"
+                    value={numQuestions}
+                    onChange={(e) => setNumQuestions(Math.max(1, parseInt(e.target.value) || 1))}
+                    className="w-full p-3 border border-purple-300 rounded-md focus:ring-2 focus:ring-purple-400 outline-none"
+                />
+            </div>
+
+            {testMode !== 'flip-card' && (
+                <div className="mb-6">
+                    <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="testDuration">
+                        Thời gian làm bài (giây):
+                    </label>
+                    <input
+                        type="number"
+                        id="testDuration"
+                        min="10"
+                        value={testDuration}
+                        onChange={(e) => setTestDuration(Math.max(10, parseInt(e.target.value) || 10))}
+                        className="w-full p-3 border border-purple-300 rounded-md focus:ring-2 focus:ring-purple-400 outline-none"
+                    />
+                </div>
+            )}
+
+            <div className="mb-6">
+                <label className="block text-gray-700 text-sm font-bold mb-2">
+                    Chế độ ôn tập:
+                </label>
+                <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-4">
+                    <label className="inline-flex items-center">
+                        <input
+                            type="radio"
+                            name="testMode"
+                            value="flip-card"
+                            checked={testMode === 'flip-card'}
+                            onChange={(e) => setTestMode(e.target.value)}
+                            className="form-radio h-5 w-5 text-purple-600"
+                        />
+                        <span className="ml-2 text-gray-700">Lật thẻ (Flashcard Mode: Anh &rarr; Việt)</span>
+                    </label>
+                    <label className="inline-flex items-center">
+                        <input
+                            type="radio"
+                            name="testMode"
+                            value="eng-vie"
+                            checked={testMode === 'eng-vie'}
+                            onChange={(e) => setTestMode(e.target.value)}
+                            className="form-radio h-5 w-5 text-purple-600"
+                        />
+                        <span className="ml-2 text-gray-700">Kiểm tra: Tiếng Anh &rarr; Tiếng Việt</span>
+                    </label>
+                    <label className="inline-flex items-center">
+                        <input
+                            type="radio"
+                            name="testMode"
+                            value="vie-eng"
+                            checked={testMode === 'vie-eng'}
+                            onChange={(e) => setTestMode(e.target.value)}
+                            className="form-radio h-5 w-5 text-purple-600"
+                        />
+                        <span className="ml-2 text-gray-700">Kiểm tra: Tiếng Việt &rarr; Tiếng Anh</span>
+                    </label>
+                </div>
+            </div>
+
+            <div className="flex flex-col space-y-3">
+                <button
+                    onClick={() => startReviewSession(false)}
+                    className="w-full px-6 py-3 bg-purple-600 text-white rounded-md font-semibold hover:bg-purple-700 transition-colors shadow-lg"
+                >
+                    Bắt đầu ôn tập (Bài mới)
+                </button>
+                {lastTestFlashcards.length > 0 && (
+                    <button
+                        onClick={() => startReviewSession(true)}
+                        className="w-full px-6 py-3 bg-blue-600 text-white rounded-md font-semibold hover:bg-blue-700 transition-colors shadow-lg"
+                    >
+                        Làm lại bài kiểm tra cũ ({lastTestFlashcards.length} câu - Xáo trộn mới)
+                    </button>
+                )}
+            </div>
+        </div>
+    );
+};
+
+// Component for the actual Test/Quiz
+const Test = ({ flashcards, duration, mode, onTestEnd }) => {
+    const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+    const [score, setScore] = useState(0);
+    const [timeLeft, setTimeLeft] = useState(duration);
+    const [answer, setAnswer] = useState('');
+    const [isCorrect, setIsCorrect] = useState(null); // null: no check, true: correct, false: incorrect
+    const [showResults, setShowResults] = useState(false);
+    const [hasCheated, setHasCheated] = useState(false);
+    const timerRef = useRef(null);
+    const answerInputRef = useRef(null);
+
+    // Anti-cheat: Detect tab/window visibility change
+    const handleVisibilityChange = useCallback(() => {
+        if (document.hidden) {
+            setHasCheated(true);
+            clearInterval(timerRef.current);
+            setShowResults(true); // End test immediately if cheating detected
+        }
+    }, []);
+
+    useEffect(() => {
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+        };
+    }, [handleVisibilityChange]);
+
+
+    // Start timer on test start
+    useEffect(() => {
+        if (!showResults && !hasCheated) {
+            timerRef.current = setInterval(() => {
+                setTimeLeft(prev => {
+                    if (prev <= 1) {
+                        clearInterval(timerRef.current);
+                        setShowResults(true); // Time's up, show results
+                        return 0;
+                    }
+                    return prev - 1;
+                });
+            }, 1000);
+        }
+
+        // Cleanup on unmount or test end
+        return () => clearInterval(timerRef.current);
+    }, [showResults, hasCheated]);
+
+    // Focus input when question changes
+    useEffect(() => {
+        if (answerInputRef.current) {
+            answerInputRef.current.focus();
+        }
+    }, [currentQuestionIndex]);
+
+    const currentCard = flashcards[currentQuestionIndex];
+    const questionText = mode === 'eng-vie' ? currentCard?.englishWord : currentCard?.vietnameseWord;
+    const correctAnswer = mode === 'eng-vie' ? currentCard?.vietnameseWord : currentCard?.englishWord;
+
+    const checkAnswer = () => {
+        if (!currentCard) return;
+
+        const userAnswer = answer.trim().toLowerCase();
+        const correctFormattedAnswer = correctAnswer.trim().toLowerCase();
+
+        if (userAnswer === correctFormattedAnswer) {
+            setScore(prev => prev + 1);
+            setIsCorrect(true);
+        } else {
+            setIsCorrect(false);
+        }
+        // Move to next question after a short delay to show feedback
+        setTimeout(() => {
+            handleNextQuestion();
+        }, 1000);
+    };
+
+    const handleNextQuestion = () => {
+        setAnswer('');
+        setIsCorrect(null); // Reset feedback
+        if (currentQuestionIndex < flashcards.length - 1) {
+            setCurrentQuestionIndex(prev => prev + 1);
+        } else {
+            clearInterval(timerRef.current);
+            setShowResults(true); // End of questions, show results
+        }
+    };
+
+    const formatTime = (seconds) => {
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = seconds % 60;
+        return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+    };
+
+    if (showResults) {
+        return (
+            <div className="flex flex-col items-center p-8 bg-blue-50 rounded-lg shadow-xl">
+                <h2 className="text-3xl font-bold text-blue-800 mb-6">Kết quả kiểm tra</h2>
+                {hasCheated ? (
+                    <p className="text-xl text-red-600 font-semibold mb-4 animate-pulse">
+                        ⚠️ Phát hiện gian lận! Bài kiểm tra đã bị dừng.
+                    </p>
+                ) : (
+                    <p className="text-2xl text-green-700 font-semibold mb-4">
+                        Bạn đã đúng {score} / {flashcards.length} câu.
+                    </p>
+                )}
+                <button
+                    onClick={onTestEnd}
+                    className="px-8 py-4 bg-blue-600 text-white rounded-full font-semibold text-lg hover:bg-blue-700 transition-colors shadow-lg"
+                >
+                    Quay lại trang Ôn tập
+                </button>
+            </div>
+        );
+    }
+
+    if (!currentCard) {
+        return (
+            <div className="text-center text-gray-600 text-xl">
+                Không có flashcard nào được tải cho bài kiểm tra này.
+            </div>
+        );
+    }
+
+    return (
+        <div className="flex flex-col items-center p-8 bg-gradient-to-br from-blue-100 to-purple-100 rounded-lg shadow-xl relative min-h-[400px]">
+            <div className="absolute top-4 right-4 bg-white text-blue-700 px-4 py-2 rounded-full font-semibold text-lg shadow-md">
+                Thời gian: {formatTime(timeLeft)}
+            </div>
+            <div className="absolute top-4 left-4 bg-white text-green-700 px-4 py-2 rounded-full font-semibold text-lg shadow-md">
+                Điểm: {score} / {flashcards.length}
+            </div>
+
+            <p className="text-gray-600 mb-2 mt-12 text-center text-sm">
+                Câu hỏi {currentQuestionIndex + 1} / {flashcards.length}
+            </p>
+            <div className="flashcard-display bg-white p-10 rounded-xl shadow-lg w-full max-w-lg text-center min-h-[180px] flex items-center justify-center mb-8 transform hover:scale-105 transition-transform duration-300">
+                <p className="text-4xl font-bold text-blue-900 break-words max-w-full">
+                    {questionText}
+                </p>
+            </div>
+
+            <input
+                ref={answerInputRef}
+                type="text"
+                placeholder="Nhập câu trả lời của bạn..."
+                value={answer}
+                onChange={(e) => setAnswer(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && checkAnswer()}
+                className="w-full max-w-md p-4 text-center border-2 border-blue-300 rounded-full text-xl focus:ring-4 focus:ring-blue-500 outline-none transition-all duration-200"
+            />
+
+            {isCorrect !== null && (
+                <div className={`mt-4 px-6 py-2 rounded-full font-semibold text-white shadow-md ${isCorrect ? 'bg-green-500' : 'bg-red-500'}`}>
+                    {isCorrect ? 'Chính xác!' : `Sai rồi! Đáp án: ${correctAnswer}`}
+                </div>
+            )}
+
+            <div className="mt-8 flex space-x-4">
+                <button
+                    onClick={checkAnswer}
+                    className="px-8 py-4 bg-blue-600 text-white rounded-full font-semibold text-lg hover:bg-blue-700 transition-colors shadow-lg transform hover:scale-105"
+                >
+                    Kiểm tra
+                </button>
+                <button
+                    onClick={handleNextQuestion}
+                    className="px-8 py-4 bg-gray-300 text-gray-800 rounded-full font-semibold text-lg hover:bg-gray-400 transition-colors shadow-lg transform hover:scale-105"
+                >
+                    Bỏ qua &rarr;
+                </button>
+            </div>
+        </div>
+    );
+};
+
+// Component for Flip Card Mode
+const FlipCardMode = ({ flashcards, onEnd }) => {
+    const [currentIndex, setCurrentIndex] = useState(0);
+    const [isFlipped, setIsFlipped] = useState(false);
+
+    // Reset flip state when card changes
+    useEffect(() => {
+        setIsFlipped(false);
+    }, [currentIndex]);
+
+    const currentCard = flashcards[currentIndex];
+
+    if (!currentCard) {
+        return (
+            <div className="flex flex-col items-center p-8 bg-blue-50 rounded-lg shadow-xl">
+                <h2 className="text-2xl font-bold text-blue-800 mb-4">Kết thúc phiên lật thẻ</h2>
+                <p className="text-xl text-gray-700 mb-6">Bạn đã xem hết {flashcards.length} thẻ.</p>
+                <button
+                    onClick={onEnd}
+                    className="px-8 py-4 bg-blue-600 text-white rounded-full font-semibold text-lg hover:bg-blue-700 transition-colors shadow-lg"
+                >
+                    Quay lại trang Ôn tập
+                </button>
+            </div>
+        );
+    }
+
+    // Hardcode front to English and back to Vietnamese for Flip Card Mode
+    const frontText = currentCard.englishWord;
+    const backText = currentCard.vietnameseWord;
+
+    const handleFlip = () => {
+        setIsFlipped(prev => !prev);
+    };
+
+    const handleNext = () => {
+        if (currentIndex < flashcards.length - 1) {
+            setCurrentIndex(prev => prev + 1);
+        } else {
+            onEnd(); // End session if it's the last card
+        }
+    };
+
+    const handlePrev = () => {
+        if (currentIndex > 0) {
+            setCurrentIndex(prev => prev - 1);
+        }
+    };
+
+    return (
+        <div className="flex flex-col items-center p-8 bg-gradient-to-br from-indigo-100 to-teal-100 rounded-lg shadow-xl relative min-h-[400px]">
+            <p className="text-gray-600 mb-6 text-center text-lg">
+                Thẻ {currentIndex + 1} / {flashcards.length}
+            </p>
+
+            <div className="flip-card w-full max-w-md h-64 perspective-1000 mb-8">
+                <div
+                    className={`flip-card-inner relative w-full h-full text-center transition-transform duration-700 rounded-xl shadow-lg cursor-pointer ${isFlipped ? 'rotated' : ''}`}
+                    onClick={handleFlip}
+                >
+                    <div className="flip-card-front absolute w-full h-full backface-hidden bg-white flex items-center justify-center p-6 rounded-xl border-4 border-indigo-300">
+                        <p className="text-3xl font-bold text-indigo-800 break-words max-w-full">
+                            {frontText}
+                        </p>
+                    </div>
+                    <div className="flip-card-back absolute w-full h-full backface-hidden bg-white flex items-center justify-center p-6 rounded-xl border-4 border-teal-300 transform rotate-y-180">
+                        <p className="text-3xl font-bold text-teal-800 break-words max-w-full">
+                            {backText}
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div className="flex space-x-4 mt-4">
+                <button
+                    onClick={handlePrev}
+                    disabled={currentIndex === 0}
+                    className={`px-6 py-3 rounded-full font-semibold text-lg transition-colors shadow-lg transform hover:scale-105 ${
+                        currentIndex === 0 ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                    }`}
+                >
+                    &larr; Thẻ trước
+                </button>
+                <button
+                    onClick={handleNext}
+                    className="px-6 py-3 bg-teal-600 text-white rounded-full font-semibold text-lg hover:bg-teal-700 transition-colors shadow-lg transform hover:scale-105"
+                >
+                    Thẻ tiếp theo &rarr;
+                </button>
+            </div>
+
+            {/* CSS for flip card animation */}
+            <style>{`
+                .perspective-1000 {
+                    perspective: 1000px;
+                }
+                .flip-card-inner {
+                    transform-style: preserve-3d;
+                }
+                .flip-card-inner.rotated {
+                    transform: rotateY(180deg);
+                }
+                .flip-card-front, .flip-card-back {
+                    -webkit-backface-visibility: hidden; /* Safari */
+                    backface-visibility: hidden;
+                }
+                .flip-card-back {
+                    transform: rotateY(180deg);
+                }
+            `}</style>
+        </div>
+    );
+};
+
+export default App;
