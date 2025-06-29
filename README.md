@@ -1,16 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth'; // Re-added signInWithCustomToken
 import { getFirestore, collection, addDoc, doc, deleteDoc, onSnapshot, query } from 'firebase/firestore';
 
 // Define Firebase config and app ID from global variables provided by Canvas environment
-// These variables are available directly in the Canvas runtime, unlike process.env on Vercel.
+// These variables are available directly in the Canvas runtime.
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; // Re-added initialAuthToken
 
-// The firestoreAppNamespace should be consistent with the Firebase rules.
-// In Canvas, it often maps to __app_id.
+// The firestoreAppNamespace should be consistent with the Canvas __app_id.
 const firestoreAppNamespace = appId;
 
 
@@ -23,7 +22,6 @@ const App = () => {
     const [currentView, setCurrentView] = useState('manage'); // 'manage', 'review', 'test', 'flipcard'
     const [message, setMessage] = useState('');
     const [messageType, setMessageType] = useState(''); // 'success', 'error', 'info'
-    // Removed isTeacherMode state as public sharing/editing is removed
 
     // Initialize Firebase and authenticate user
     useEffect(() => {
@@ -31,7 +29,7 @@ const App = () => {
             try {
                 // Ensure Firebase config is loaded. For Canvas, this should always be provided.
                 if (!firebaseConfig || Object.keys(firebaseConfig).length === 0) {
-                    console.error("Firebase configuration is missing. Please ensure Canvas environment provides it.");
+                    console.error("Lỗi: Cấu hình Firebase bị thiếu. Vui lòng đảm bảo môi trường Canvas cung cấp nó.");
                     setMessage('Lỗi cấu hình Firebase. Vui lòng kiểm tra môi trường Canvas.');
                     setMessageType('error');
                     setLoading(false);
@@ -45,7 +43,7 @@ const App = () => {
                 setAuth(authInstance);
                 setDb(dbInstance);
 
-                // Use __initial_auth_token if available (for authenticated Canvas sessions), otherwise sign in anonymously.
+                // Use initialAuthToken if available (for authenticated Canvas sessions), otherwise sign in anonymously.
                 if (initialAuthToken) {
                     await signInWithCustomToken(authInstance, initialAuthToken);
                 } else {
@@ -102,7 +100,6 @@ const App = () => {
             {userId && (
                 <div className="text-sm text-gray-600 mb-4 flex items-center space-x-4">
                     <span>ID người dùng của bạn: <span className="font-mono bg-gray-200 px-2 py-1 rounded">{userId}</span></span>
-                    {/* Removed teacher mode checkbox */}
                 </div>
             )}
 
@@ -150,16 +147,15 @@ const App = () => {
 };
 
 // Component to manage vocabulary (add, import, list)
-const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace }) => { // Removed isTeacherMode prop
-    const [privateLessons, setPrivateLessons] = useState([]); // Only private lessons now
-    const [allFlashcards, setAllFlashcards] = useState([]); // Store all flashcards (now only private)
+const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace }) => {
+    const [privateLessons, setPrivateLessons] = useState([]);
+    const [allFlashcards, setAllFlashcards] = useState([]);
     const [newLessonName, setNewLessonName] = useState('');
-    // Removed isNewLessonPublic state
     const [englishWord, setEnglishWord] = useState('');
     const [vietnameseWord, setVietnameseWord] = useState('');
-    const [selectedLessonId, setSelectedLessonId] = useState(''); // Only private lesson ID now
+    const [selectedLessonId, setSelectedLessonId] = useState('');
     const [bulkText, setBulkText] = useState('');
-    const [bulkLessonId, setBulkLessonId] = useState(''); // Only private lesson ID now
+    const [bulkLessonId, setBulkLessonId] = useState('');
     const [ocrLoading, setOcrLoading] = useState(false);
 
     // Fetch lessons and flashcards
@@ -169,7 +165,7 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace
         // Listener for private lessons only
         const privateLessonsQuery = query(collection(db, `artifacts/${firestoreAppNamespace}/users/${userId}/lessons`));
         const unsubscribePrivateLessons = onSnapshot(privateLessonsQuery, (snapshot) => {
-            const lessonsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isPublic: false })); // isPublic is always false now
+            const lessonsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isPublic: false }));
             setPrivateLessons(lessonsData);
         }, (error) => {
             console.error("Error loading private lessons:", error);
@@ -179,8 +175,8 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace
         // Listener for private flashcards only
         const privateFlashcardsQuery = query(collection(db, `artifacts/${firestoreAppNamespace}/users/${userId}/flashcards`));
         const unsubscribePrivateFlashcards = onSnapshot(privateFlashcardsQuery, (snapshot) => {
-            const cardsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isPublic: false })); // isPublic is always false now
-            setAllFlashcards(cardsData); // No merging needed, as no public cards
+            const cardsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isPublic: false }));
+            setAllFlashcards(cardsData);
         }, (error) => {
             console.error("Error loading private flashcards:", error);
             showMessage('Không thể tải flashcard cá nhân.', 'error');
@@ -201,13 +197,6 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace
     }, [privateLessons, selectedLessonId]);
 
 
-    // Helper to determine if a lesson is public (now always false for management)
-    const getLessonType = (lessonId) => {
-        // Since we removed public functionality, this will always return false for lessons in ManageVocabulary
-        // However, the prop `isPublic` might still be present on existing data in DB, so keep filtering by `!card.isPublic` for displaying purposes.
-        return false;
-    };
-
     // Handle adding a new lesson
     const handleAddLesson = async () => {
         if (!newLessonName.trim() || !db || !userId || !firestoreAppNamespace) {
@@ -215,7 +204,6 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace
             return;
         }
 
-        // Lesson path is always private now
         const lessonCollectionPath = `artifacts/${firestoreAppNamespace}/users/${userId}/lessons`;
         try {
             await addDoc(collection(db, lessonCollectionPath), {
@@ -224,7 +212,6 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace
                 createdAt: new Date(),
             });
             setNewLessonName('');
-            // Removed setIsNewLessonPublic(false);
             showMessage('Thêm bài học thành công!', 'success');
         } catch (e) {
             console.error("Lỗi khi thêm bài học:", e);
@@ -239,7 +226,6 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace
             return;
         }
 
-        // Flashcard path is always private now
         const flashcardCollectionPath = `artifacts/${firestoreAppNamespace}/users/${userId}/flashcards`;
 
         try {
@@ -248,7 +234,7 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace
                 vietnameseWord: vietnameseWord.trim(),
                 lessonId: selectedLessonId,
                 ownerId: userId,
-                isPublic: false, // Always false now
+                isPublic: false,
                 createdAt: new Date(),
             });
             setEnglishWord('');
@@ -267,7 +253,6 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace
             return;
         }
 
-        // Flashcard path is always private now
         const flashcardCollectionPath = `artifacts/${firestoreAppNamespace}/users/${userId}/flashcards`;
 
         const lines = bulkText.split('\n').filter(line => line.trim() !== '');
@@ -280,7 +265,7 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace
                     vietnameseWord: parts.slice(1).join(' - '),
                     lessonId: bulkLessonId,
                     ownerId: userId,
-                    isPublic: false, // Always false now
+                    isPublic: false,
                     createdAt: new Date(),
                 });
             }
@@ -325,7 +310,7 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace
                         }
                     ],
                 };
-                const apiKey = ""; // API key for Gemini is handled by the environment, keep it empty string.
+                const apiKey = ""; // Gemini API key is handled by the environment, keep it empty string.
                 const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
 
                 const response = await fetch(apiUrl, {
@@ -354,10 +339,9 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace
     };
 
     // Delete lesson and associated flashcards
-    const handleDeleteLesson = async (lessonId) => { // Removed isPublicLesson parameter
+    const handleDeleteLesson = async (lessonId) => {
         if (!db || !userId || !firestoreAppNamespace) return;
 
-        // Lesson path is always private now
         const collectionPath = `artifacts/${firestoreAppNamespace}/users/${userId}/lessons`;
         const flashcardCollectionPath = `artifacts/${firestoreAppNamespace}/users/${userId}/flashcards`;
 
@@ -389,11 +373,9 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace
         if (!userConfirmed) return;
 
         try {
-            // Delete lesson document
             await deleteDoc(doc(db, collectionPath, lessonId));
 
-            // Delete associated flashcards (only private cards now)
-            const cardsToDelete = allFlashcards.filter(card => card.lessonId === lessonId); // No isPublic filter needed now
+            const cardsToDelete = allFlashcards.filter(card => card.lessonId === lessonId);
             await Promise.all(cardsToDelete.map(card =>
                 deleteDoc(doc(db, flashcardCollectionPath, card.id))
             ));
@@ -405,10 +387,9 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace
     };
 
     // Delete a single flashcard
-    const handleDeleteFlashcard = async (cardId) => { // Removed isPublicCard parameter
+    const handleDeleteFlashcard = async (cardId) => {
         if (!db || !userId || !firestoreAppNamespace) return;
 
-        // Flashcard path is always private now
         const flashcardCollectionPath = `artifacts/${firestoreAppNamespace}/users/${userId}/flashcards`;
 
         const userConfirmed = await new Promise(resolve => {
@@ -448,7 +429,6 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace
     };
 
 
-    // allAvailableLessons now only includes private lessons
     const allAvailableLessons = privateLessons;
 
 
@@ -465,7 +445,6 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace
                         onChange={(e) => setNewLessonName(e.target.value)}
                         className="flex-grow p-3 border border-blue-300 rounded-md focus:ring-2 focus:ring-blue-400 outline-none"
                     />
-                    {/* Removed isTeacherMode checkbox */}
                     <button
                         onClick={handleAddLesson}
                         className="px-6 py-3 bg-blue-600 text-white rounded-md font-semibold hover:bg-blue-700 transition-colors shadow-md"
@@ -502,7 +481,6 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace
                         {privateLessons.map(lesson => (
                             <option key={lesson.id} value={lesson.id}>{lesson.name} (Cá nhân)</option>
                         ))}
-                        {/* Removed public lessons options */}
                     </select>
                 </div>
                 <button
@@ -552,7 +530,6 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace
                      {privateLessons.map(lesson => (
                         <option key={lesson.id} value={lesson.id}>{lesson.name} (Cá nhân)</option>
                     ))}
-                    {/* Removed public lessons options */}
                 </select>
                 <button
                     onClick={handleBulkImport}
@@ -565,7 +542,7 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace
             {/* Danh sách Bài học và Từ vựng */}
             <div className="bg-gray-50 p-6 rounded-lg shadow-inner">
                 <h2 className="text-2xl font-semibold text-gray-700 mb-4">Danh sách Bài học và Từ vựng</h2>
-                {privateLessons.length === 0 ? ( // Only check private lessons now
+                {privateLessons.length === 0 ? (
                     <p className="text-gray-500">Chưa có bài học nào. Hãy thêm một bài học mới!</p>
                 ) : (
                     <div className="space-y-6">
@@ -577,10 +554,10 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace
                                     <div key={lesson.id} className="border-b border-gray-100 last:border-b-0 py-2">
                                         <div className="flex justify-between items-center mb-1">
                                             <span className="font-semibold text-gray-700">
-                                                {lesson.name} ({allFlashcards.filter(card => card.lessonId === lesson.id).length} từ) {/* No isPublic filter needed now */}
+                                                {lesson.name} ({allFlashcards.filter(card => card.lessonId === lesson.id).length} từ)
                                             </span>
                                             <button
-                                                onClick={() => handleDeleteLesson(lesson.id)} // No isPublicLesson parameter
+                                                onClick={() => handleDeleteLesson(lesson.id)}
                                                 className="text-red-500 hover:text-red-700 transition-colors"
                                                 title="Xóa bài học và tất cả từ vựng"
                                             >
@@ -589,17 +566,17 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace
                                                 </svg>
                                             </button>
                                         </div>
-                                        {allFlashcards.filter(card => card.lessonId === lesson.id).length > 0 ? ( // No isPublic filter needed now
+                                        {allFlashcards.filter(card => card.lessonId === lesson.id).length > 0 ? (
                                             <ul className="text-sm ml-4">
                                                 {allFlashcards
-                                                    .filter(card => card.lessonId === lesson.id) // No isPublic filter needed now
+                                                    .filter(card => card.lessonId === lesson.id)
                                                     .map(card => (
                                                         <li key={card.id} className="flex justify-between items-center py-1">
                                                             <span className="text-gray-600">
                                                                 {card.englishWord} - {card.vietnameseWord}
                                                             </span>
                                                             <button
-                                                                onClick={() => handleDeleteFlashcard(card.id)} // No isPublicCard parameter
+                                                                onClick={() => handleDeleteFlashcard(card.id)}
                                                                 className="text-red-400 hover:text-red-600 text-xs"
                                                                 title="Xóa flashcard"
                                                             >
@@ -615,8 +592,6 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace
                                 ))}
                             </div>
                         )}
-
-                        {/* Removed Public Lessons section */}
                     </div>
                 )}
             </div>
@@ -626,15 +601,14 @@ const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace
 
 // Component for Review Configuration and starting tests
 const ReviewSection = ({ db, auth, userId, showMessage, setCurrentView, currentView, firestoreAppNamespace }) => {
-    const [privateLessons, setPrivateLessons] = useState([]); // Only private lessons now
+    const [privateLessons, setPrivateLessons] = useState([]);
     const [allFlashcards, setAllFlashcards] = useState([]);
-    const [selectedPrivateLessonIds, setSelectedPrivateLessonIds] = useState([]); // Only private lesson IDs now
-    // Removed selectedPublicLessonIds
+    const [selectedPrivateLessonIds, setSelectedPrivateLessonIds] = useState([]);
     const [numQuestions, setNumQuestions] = useState(10);
-    const [testDuration, setTestDuration] = useState(60); // in seconds, for test mode
-    const [testMode, setTestMode] = useState('flip-card'); // 'eng-vie', 'vie-eng', 'flip-card'
-    const [testFlashcards, setTestFlashcards] = useState([]); // Cards selected for the current test/flip session
-    const [lastTestFlashcards, setLastTestFlashcards] = useState([]); // Stores cards from the last full test for re-testing
+    const [testDuration, setTestDuration] = useState(60);
+    const [testMode, setTestMode] = useState('flip-card');
+    const [testFlashcards, setTestFlashcards] = useState([]);
+    const [lastTestFlashcards, setLastTestFlashcards] = useState([]);
 
     // Fetch lessons and flashcards for review configuration
     useEffect(() => {
@@ -653,8 +627,8 @@ const ReviewSection = ({ db, auth, userId, showMessage, setCurrentView, currentV
         // Listener for private flashcards only
         const privateFlashcardsQuery = query(collection(db, `artifacts/${firestoreAppNamespace}/users/${userId}/flashcards`));
         const unsubscribePrivateFlashcards = onSnapshot(privateFlashcardsQuery, (snapshot) => {
-            const privateCards = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isPublic: false })); // isPublic is always false now
-            setAllFlashcards(privateCards); // No merging needed, as no public cards
+            const privateCards = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isPublic: false }));
+            setAllFlashcards(privateCards);
         }, (error) => {
             console.error("Error loading private flashcards for review:", error);
             showMessage('Không thể tải flashcard cá nhân cho phần ôn tập.', 'error');
@@ -675,8 +649,6 @@ const ReviewSection = ({ db, auth, userId, showMessage, setCurrentView, currentV
             setSelectedPrivateLessonIds(prev => prev.filter(id => id !== value));
         }
     };
-
-    // Removed handlePublicLessonSelection
 
 
     // Prepare and start the test/flip card session
@@ -743,8 +715,6 @@ const ReviewSection = ({ db, auth, userId, showMessage, setCurrentView, currentV
                     )}
                 </div>
             </div>
-
-            {/* Removed Public Lessons selection */}
 
             <div className="mb-6">
                 <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="numQuestions">
