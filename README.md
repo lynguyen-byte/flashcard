@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, addDoc, getDocs, doc, setDoc, deleteDoc, onSnapshot, query } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, doc, deleteDoc, onSnapshot, query, where } from 'firebase/firestore'; // Added 'where' for potential future use, though not strictly needed for current listeners
 
 // Define Firebase config and app ID from global variables
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -17,6 +17,7 @@ const App = () => {
     const [currentView, setCurrentView] = useState('manage'); // 'manage', 'review', 'test', 'flipcard'
     const [message, setMessage] = useState('');
     const [messageType, setMessageType] = useState(''); // 'success', 'error', 'info'
+    const [isTeacherMode, setIsTeacherMode] = useState(false); // Client-side flag for teacher demo
 
     // Initialize Firebase and authenticate user
     useEffect(() => {
@@ -29,20 +30,17 @@ const App = () => {
                 setAuth(authInstance);
                 setDb(dbInstance);
 
-                // Sign in with custom token or anonymously
                 if (initialAuthToken) {
                     await signInWithCustomToken(authInstance, initialAuthToken);
                 } else {
                     await signInAnonymously(authInstance);
                 }
 
-                // Listen for auth state changes
                 const unsubscribe = onAuthStateChanged(authInstance, (user) => {
                     if (user) {
                         setUserId(user.uid);
                     } else {
-                        // Fallback for anonymous user ID if somehow auth fails
-                        setUserId(crypto.randomUUID());
+                        setUserId(crypto.randomUUID()); // Anonymous ID
                     }
                     setLoading(false);
                 });
@@ -85,8 +83,17 @@ const App = () => {
             </h1>
 
             {userId && (
-                <div className="text-sm text-gray-600 mb-4">
-                    ID người dùng của bạn: <span className="font-mono bg-gray-200 px-2 py-1 rounded">{userId}</span>
+                <div className="text-sm text-gray-600 mb-4 flex items-center space-x-4">
+                    <span>ID người dùng của bạn: <span className="font-mono bg-gray-200 px-2 py-1 rounded">{userId}</span></span>
+                    <label className="inline-flex items-center ml-4">
+                        <input
+                            type="checkbox"
+                            className="form-checkbox h-5 w-5 text-blue-600"
+                            checked={isTeacherMode}
+                            onChange={(e) => setIsTeacherMode(e.target.checked)}
+                        />
+                        <span className="ml-2 text-blue-700 font-semibold">Tôi là Giáo viên (Demo)</span>
+                    </label>
                 </div>
             )}
 
@@ -123,7 +130,7 @@ const App = () => {
 
             <div className="w-full max-w-4xl bg-white p-8 rounded-xl shadow-2xl">
                 {currentView === 'manage' && db && auth && userId && (
-                    <ManageVocabulary db={db} auth={auth} userId={userId} showMessage={showMessage} />
+                    <ManageVocabulary db={db} auth={auth} userId={userId} showMessage={showMessage} isTeacherMode={isTeacherMode} />
                 )}
                 {(currentView === 'review' || currentView === 'test' || currentView === 'flipcard') && db && auth && userId && (
                     <ReviewSection db={db} auth={auth} userId={userId} showMessage={showMessage} setCurrentView={setCurrentView} currentView={currentView} />
@@ -134,52 +141,96 @@ const App = () => {
 };
 
 // Component to manage vocabulary (add, import, list)
-const ManageVocabulary = ({ db, auth, userId, showMessage }) => {
-    const [lessons, setLessons] = useState([]);
-    const [flashcards, setFlashcards] = useState([]);
+const ManageVocabulary = ({ db, auth, userId, showMessage, isTeacherMode }) => {
+    const [privateLessons, setPrivateLessons] = useState([]);
+    const [publicLessons, setPublicLessons] = useState([]);
+    const [allFlashcards, setAllFlashcards] = useState([]); // Store all flashcards (private and public)
     const [newLessonName, setNewLessonName] = useState('');
+    const [isNewLessonPublic, setIsNewLessonPublic] = useState(false);
     const [englishWord, setEnglishWord] = useState('');
     const [vietnameseWord, setVietnameseWord] = useState('');
-    const [selectedLessonId, setSelectedLessonId] = useState('');
+    const [selectedLessonId, setSelectedLessonId] = useState(''); // Can be private or public lesson ID
     const [bulkText, setBulkText] = useState('');
-    const [bulkLessonId, setBulkLessonId] = useState('');
-    const [imageFile, setImageFile] = useState(null);
+    const [bulkLessonId, setBulkLessonId] = useState(''); // Can be private or public lesson ID
     const [ocrLoading, setOcrLoading] = useState(false);
 
-    // Fetch lessons and flashcards on component mount and on data changes
+    // Fetch lessons and flashcards
     useEffect(() => {
         if (!db || !userId) return;
 
-        // Listener for lessons
-        const lessonsQuery = query(collection(db, `artifacts/${appId}/users/${userId}/lessons`));
-        const unsubscribeLessons = onSnapshot(lessonsQuery, (snapshot) => {
-            const lessonsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setLessons(lessonsData);
-            if (lessonsData.length > 0 && !selectedLessonId) {
-                // Set default selected lesson if not already set and lessons exist
-                setSelectedLessonId(lessonsData[0].id);
-                setBulkLessonId(lessonsData[0].id);
-            }
+        // Listener for private lessons
+        const privateLessonsQuery = query(collection(db, `artifacts/${appId}/users/${userId}/lessons`));
+        const unsubscribePrivateLessons = onSnapshot(privateLessonsQuery, (snapshot) => {
+            const lessonsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isPublic: false }));
+            setPrivateLessons(lessonsData);
         }, (error) => {
-            console.error("Error loading lessons:", error);
-            showMessage('Không thể tải bài học.', 'error');
+            console.error("Error loading private lessons:", error);
+            showMessage('Không thể tải bài học cá nhân.', 'error');
         });
 
-        // Listener for flashcards
-        const flashcardsQuery = query(collection(db, `artifacts/${appId}/users/${userId}/flashcards`));
-        const unsubscribeFlashcards = onSnapshot(flashcardsQuery, (snapshot) => {
-            const flashcardsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setFlashcards(flashcardsData);
+        // Listener for public lessons
+        const publicLessonsQuery = query(collection(db, `artifacts/${appId}/shared_lessons`));
+        const unsubscribePublicLessons = onSnapshot(publicLessonsQuery, (snapshot) => {
+            const lessonsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isPublic: true }));
+            setPublicLessons(lessonsData);
         }, (error) => {
-            console.error("Error loading flashcards:", error);
-            showMessage('Không thể tải flashcard.', 'error');
+            console.error("Error loading public lessons:", error);
+            showMessage('Không thể tải bài học công khai.', 'error');
+        });
+
+        // Listener for private flashcards
+        const privateFlashcardsQuery = query(collection(db, `artifacts/${appId}/users/${userId}/flashcards`));
+        const unsubscribePrivateFlashcards = onSnapshot(privateFlashcardsQuery, (snapshot) => {
+            const cardsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isPublic: false }));
+            // Merge with public flashcards for display
+            setAllFlashcards(prev => {
+                const publicCards = prev.filter(card => card.isPublic);
+                return [...publicCards, ...cardsData];
+            });
+        }, (error) => {
+            console.error("Error loading private flashcards:", error);
+            showMessage('Không thể tải flashcard cá nhân.', 'error');
+        });
+
+        // Listener for public flashcards
+        const publicFlashcardsQuery = query(collection(db, `artifacts/${appId}/shared_flashcards`));
+        const unsubscribePublicFlashcards = onSnapshot(publicFlashcardsQuery, (snapshot) => {
+            const cardsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isPublic: true }));
+            // Merge with private flashcards for display
+            setAllFlashcards(prev => {
+                const privateCards = prev.filter(card => !card.isPublic && card.lessonId.startsWith(userId)); // Basic check for private
+                return [...privateCards, ...cardsData];
+            });
+        }, (error) => {
+            console.error("Error loading public flashcards:", error);
+            showMessage('Không thể tải flashcard công khai.', 'error');
         });
 
         return () => {
-            unsubscribeLessons();
-            unsubscribeFlashcards();
+            unsubscribePrivateLessons();
+            unsubscribePublicLessons();
+            unsubscribePrivateFlashcards();
+            unsubscribePublicFlashcards();
         };
-    }, [db, userId, showMessage, selectedLessonId]);
+    }, [db, userId, showMessage]);
+
+    // Set default selected lesson if available and not already set
+    useEffect(() => {
+        if (privateLessons.length > 0 && !selectedLessonId) {
+            setSelectedLessonId(privateLessons[0].id);
+            setBulkLessonId(privateLessons[0].id);
+        } else if (publicLessons.length > 0 && !selectedLessonId && privateLessons.length === 0) {
+             setSelectedLessonId(publicLessons[0].id);
+             setBulkLessonId(publicLessons[0].id);
+        }
+    }, [privateLessons, publicLessons, selectedLessonId]);
+
+
+    // Helper to determine if a lesson is public based on its ID (prefixed for clarity)
+    const getLessonType = (lessonId) => {
+        const lesson = [...privateLessons, ...publicLessons].find(l => l.id === lessonId);
+        return lesson ? lesson.isPublic : false;
+    };
 
     // Handle adding a new lesson
     const handleAddLesson = async () => {
@@ -187,15 +238,19 @@ const ManageVocabulary = ({ db, auth, userId, showMessage }) => {
             showMessage('Tên bài học không được trống.', 'error');
             return;
         }
+
+        const lessonCollectionPath = isNewLessonPublic ? `artifacts/${appId}/shared_lessons` : `artifacts/${appId}/users/${userId}/lessons`;
         try {
-            const docRef = await addDoc(collection(db, `artifacts/${appId}/users/${userId}/lessons`), {
+            await addDoc(collection(db, lessonCollectionPath), {
                 name: newLessonName.trim(),
+                ownerId: userId, // Store owner ID for public lessons
                 createdAt: new Date(),
             });
             setNewLessonName('');
+            setIsNewLessonPublic(false);
             showMessage('Thêm bài học thành công!', 'success');
         } catch (e) {
-            console.error("Error adding lesson:", e);
+            console.error("Lỗi khi thêm bài học:", e);
             showMessage('Lỗi khi thêm bài học.', 'error');
         }
     };
@@ -206,18 +261,28 @@ const ManageVocabulary = ({ db, auth, userId, showMessage }) => {
             showMessage('Vui lòng điền đầy đủ từ vựng và chọn bài học.', 'error');
             return;
         }
+
+        const isPublicCard = getLessonType(selectedLessonId);
+        if (isPublicCard && !isTeacherMode) {
+             showMessage('Bạn không có quyền thêm flashcard vào bài học công khai.', 'error');
+             return;
+        }
+        const flashcardCollectionPath = isPublicCard ? `artifacts/${appId}/shared_flashcards` : `artifacts/${appId}/users/${userId}/flashcards`;
+
         try {
-            await addDoc(collection(db, `artifacts/${appId}/users/${userId}/flashcards`), {
+            await addDoc(collection(db, flashcardCollectionPath), {
                 englishWord: englishWord.trim(),
                 vietnameseWord: vietnameseWord.trim(),
-                lessonId: selectedLessonId,
+                lessonId: selectedLessonId, // Reference to the lesson (private or public)
+                ownerId: userId, // Store owner ID for public flashcards
+                isPublic: isPublicCard,
                 createdAt: new Date(),
             });
             setEnglishWord('');
             setVietnameseWord('');
             showMessage('Thêm flashcard thành công!', 'success');
         } catch (e) {
-            console.error("Error adding flashcard:", e);
+            console.error("Lỗi khi thêm flashcard:", e);
             showMessage('Lỗi khi thêm flashcard.', 'error');
         }
     };
@@ -229,6 +294,13 @@ const ManageVocabulary = ({ db, auth, userId, showMessage }) => {
             return;
         }
 
+        const isPublicBulkCard = getLessonType(bulkLessonId);
+        if (isPublicBulkCard && !isTeacherMode) {
+             showMessage('Bạn không có quyền thêm flashcard vào bài học công khai.', 'error');
+             return;
+        }
+        const flashcardCollectionPath = isPublicBulkCard ? `artifacts/${appId}/shared_flashcards` : `artifacts/${appId}/users/${userId}/flashcards`;
+
         const lines = bulkText.split('\n').filter(line => line.trim() !== '');
         const newFlashcards = [];
         for (const line of lines) {
@@ -236,8 +308,10 @@ const ManageVocabulary = ({ db, auth, userId, showMessage }) => {
             if (parts.length >= 2) {
                 newFlashcards.push({
                     englishWord: parts[0],
-                    vietnameseWord: parts.slice(1).join(' - '), // Join back if meaning has hyphens
+                    vietnameseWord: parts.slice(1).join(' - '),
                     lessonId: bulkLessonId,
+                    ownerId: userId,
+                    isPublic: isPublicBulkCard,
                     createdAt: new Date(),
                 });
             }
@@ -250,12 +324,12 @@ const ManageVocabulary = ({ db, auth, userId, showMessage }) => {
 
         try {
             await Promise.all(newFlashcards.map(card =>
-                addDoc(collection(db, `artifacts/${appId}/users/${userId}/flashcards`), card)
+                addDoc(collection(db, flashcardCollectionPath), card)
             ));
             setBulkText('');
             showMessage(`Đã thêm ${newFlashcards.length} flashcard thành công!`, 'success');
         } catch (e) {
-            console.error("Error bulk importing:", e);
+            console.error("Lỗi khi nhập hàng loạt:", e);
             showMessage('Lỗi khi nhập hàng loạt flashcard.', 'error');
         }
     };
@@ -265,32 +339,20 @@ const ManageVocabulary = ({ db, auth, userId, showMessage }) => {
         const file = e.target.files[0];
         if (!file) return;
 
-        setImageFile(file);
         setOcrLoading(true);
         showMessage('Đang phân tích hình ảnh, vui lòng đợi...', 'info');
 
         const reader = new FileReader();
         reader.onloadend = async () => {
-            const base64ImageData = reader.result.split(',')[1]; // Get base64 string without data:image/png;base64,
+            const base64ImageData = reader.result.split(',')[1];
 
             try {
-                let chatHistory = [];
                 const prompt = "Extract all English words and their Vietnamese meanings from this image. Present them as 'English Word - Vietnamese Meaning' on separate lines. If no Vietnamese meaning is available, just provide the English word. Ignore any other text not related to vocabulary pairs.";
-                chatHistory.push({ role: "user", parts: [{ text: prompt }] });
-
                 const payload = {
                     contents: [
                         {
                             role: "user",
-                            parts: [
-                                { text: prompt },
-                                {
-                                    inlineData: {
-                                        mimeType: file.type,
-                                        data: base64ImageData
-                                    }
-                                }
-                            ]
+                            parts: [{ text: prompt }, { inlineData: { mimeType: file.type, data: base64ImageData } }]
                         }
                     ],
                 };
@@ -304,9 +366,7 @@ const ManageVocabulary = ({ db, auth, userId, showMessage }) => {
                 });
 
                 const result = await response.json();
-                if (result.candidates && result.candidates.length > 0 &&
-                    result.candidates[0].content && result.candidates[0].content.parts &&
-                    result.candidates[0].content.parts.length > 0) {
+                if (result.candidates && result.candidates.length > 0 && result.candidates[0].content && result.candidates[0].content.parts && result.candidates[0].content.parts.length > 0) {
                     const extractedText = result.candidates[0].content.parts[0].text;
                     setBulkText(extractedText);
                     showMessage('Đã trích xuất văn bản thành công! Vui lòng kiểm tra và thêm vào bài học.', 'success');
@@ -325,10 +385,16 @@ const ManageVocabulary = ({ db, auth, userId, showMessage }) => {
     };
 
     // Delete lesson and associated flashcards
-    const handleDeleteLesson = async (lessonId) => {
+    const handleDeleteLesson = async (lessonId, isPublicLesson) => {
         if (!db || !userId) return;
 
-        // Custom confirmation modal (instead of alert/confirm)
+        if (isPublicLesson && !isTeacherMode) {
+            showMessage('Bạn không có quyền xóa bài học công khai.', 'error');
+            return;
+        }
+        const collectionPath = isPublicLesson ? `artifacts/${appId}/shared_lessons` : `artifacts/${appId}/users/${userId}/lessons`;
+        const flashcardCollectionPath = isPublicLesson ? `artifacts/${appId}/shared_flashcards` : `artifacts/${appId}/users/${userId}/flashcards`;
+
         const userConfirmed = await new Promise(resolve => {
             const confirmModal = document.createElement('div');
             confirmModal.className = "fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50";
@@ -358,23 +424,30 @@ const ManageVocabulary = ({ db, auth, userId, showMessage }) => {
 
         try {
             // Delete lesson document
-            await deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/lessons`, lessonId));
+            await deleteDoc(doc(db, collectionPath, lessonId));
 
             // Delete associated flashcards
-            const cardsToDelete = flashcards.filter(card => card.lessonId === lessonId);
+            const cardsToDelete = allFlashcards.filter(card => card.lessonId === lessonId && card.isPublic === isPublicLesson);
             await Promise.all(cardsToDelete.map(card =>
-                deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/flashcards`, card.id))
+                deleteDoc(doc(db, flashcardCollectionPath, card.id))
             ));
             showMessage('Xóa bài học và các flashcard liên quan thành công!', 'success');
         } catch (error) {
-            console.error("Error deleting lesson:", error);
+            console.error("Lỗi khi xóa bài học:", error);
             showMessage('Lỗi khi xóa bài học.', 'error');
         }
     };
 
     // Delete a single flashcard
-    const handleDeleteFlashcard = async (cardId) => {
+    const handleDeleteFlashcard = async (cardId, isPublicCard) => {
         if (!db || !userId) return;
+
+        if (isPublicCard && !isTeacherMode) {
+            showMessage('Bạn không có quyền xóa flashcard công khai.', 'error');
+            return;
+        }
+
+        const flashcardCollectionPath = isPublicCard ? `artifacts/${appId}/shared_flashcards` : `artifacts/${appId}/users/${userId}/flashcards`;
 
         const userConfirmed = await new Promise(resolve => {
             const confirmModal = document.createElement('div');
@@ -404,13 +477,16 @@ const ManageVocabulary = ({ db, auth, userId, showMessage }) => {
         if (!userConfirmed) return;
 
         try {
-            await deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/flashcards`, cardId));
+            await deleteDoc(doc(db, flashcardCollectionPath, cardId));
             showMessage('Xóa flashcard thành công!', 'success');
         } catch (error) {
-            console.error("Error deleting flashcard:", error);
+            console.error("Lỗi khi xóa flashcard:", error);
             showMessage('Lỗi khi xóa flashcard.', 'error');
         }
     };
+
+
+    const allAvailableLessons = [...privateLessons, ...publicLessons];
 
 
     return (
@@ -418,7 +494,7 @@ const ManageVocabulary = ({ db, auth, userId, showMessage }) => {
             {/* Thêm bài học mới */}
             <div className="bg-blue-50 p-6 rounded-lg shadow-inner">
                 <h2 className="text-2xl font-semibold text-blue-700 mb-4">Thêm Bài học mới</h2>
-                <div className="flex flex-col sm:flex-row gap-3">
+                <div className="flex flex-col sm:flex-row gap-3 items-center">
                     <input
                         type="text"
                         placeholder="Tên bài học (VD: Bài 1, Từ vựng IELTS...)"
@@ -426,6 +502,17 @@ const ManageVocabulary = ({ db, auth, userId, showMessage }) => {
                         onChange={(e) => setNewLessonName(e.target.value)}
                         className="flex-grow p-3 border border-blue-300 rounded-md focus:ring-2 focus:ring-blue-400 outline-none"
                     />
+                    {isTeacherMode && (
+                        <label className="inline-flex items-center text-blue-700 font-semibold cursor-pointer whitespace-nowrap">
+                            <input
+                                type="checkbox"
+                                className="form-checkbox h-5 w-5 text-purple-600 rounded mr-2"
+                                checked={isNewLessonPublic}
+                                onChange={(e) => setIsNewLessonPublic(e.target.checked)}
+                            />
+                            Tạo công khai
+                        </label>
+                    )}
                     <button
                         onClick={handleAddLesson}
                         className="px-6 py-3 bg-blue-600 text-white rounded-md font-semibold hover:bg-blue-700 transition-colors shadow-md"
@@ -459,8 +546,13 @@ const ManageVocabulary = ({ db, auth, userId, showMessage }) => {
                         className="p-3 border border-green-300 rounded-md focus:ring-2 focus:ring-green-400 outline-none col-span-1 md:col-span-2"
                     >
                         <option value="">-- Chọn bài học --</option>
-                        {lessons.map(lesson => (
-                            <option key={lesson.id} value={lesson.id}>{lesson.name}</option>
+                        {privateLessons.map(lesson => (
+                            <option key={lesson.id} value={lesson.id}>{lesson.name} (Cá nhân)</option>
+                        ))}
+                        {publicLessons.map(lesson => (
+                            <option key={lesson.id} value={lesson.id} disabled={!isTeacherMode} className={!isTeacherMode ? 'opacity-50 cursor-not-allowed' : ''}>
+                                {lesson.name} (Công khai - {lesson.ownerId === userId ? 'Của bạn' : 'Khác'})
+                            </option>
                         ))}
                     </select>
                 </div>
@@ -508,8 +600,13 @@ const ManageVocabulary = ({ db, auth, userId, showMessage }) => {
                     className="mt-3 w-full p-3 border border-yellow-300 rounded-md focus:ring-2 focus:ring-yellow-400 outline-none"
                 >
                     <option value="">-- Chọn bài học cho hàng loạt --</option>
-                    {lessons.map(lesson => (
-                        <option key={lesson.id} value={lesson.id}>{lesson.name}</option>
+                     {privateLessons.map(lesson => (
+                        <option key={lesson.id} value={lesson.id}>{lesson.name} (Cá nhân)</option>
+                    ))}
+                    {publicLessons.map(lesson => (
+                        <option key={lesson.id} value={lesson.id} disabled={!isTeacherMode} className={!isTeacherMode ? 'opacity-50 cursor-not-allowed' : ''}>
+                            {lesson.name} (Công khai - {lesson.ownerId === userId ? 'Của bạn' : 'Khác'})
+                        </option>
                     ))}
                 </select>
                 <button
@@ -523,50 +620,108 @@ const ManageVocabulary = ({ db, auth, userId, showMessage }) => {
             {/* Danh sách Bài học và Từ vựng */}
             <div className="bg-gray-50 p-6 rounded-lg shadow-inner">
                 <h2 className="text-2xl font-semibold text-gray-700 mb-4">Danh sách Bài học và Từ vựng</h2>
-                {lessons.length === 0 ? (
+                {(privateLessons.length === 0 && publicLessons.length === 0) ? (
                     <p className="text-gray-500">Chưa có bài học nào. Hãy thêm một bài học mới!</p>
                 ) : (
                     <div className="space-y-6">
-                        {lessons.map(lesson => (
-                            <div key={lesson.id} className="border border-gray-200 rounded-lg p-4 bg-white shadow-sm">
-                                <div className="flex justify-between items-center mb-3">
-                                    <h3 className="text-xl font-medium text-gray-800">
-                                        {lesson.name} ({flashcards.filter(card => card.lessonId === lesson.id).length} từ)
-                                    </h3>
-                                    <button
-                                        onClick={() => handleDeleteLesson(lesson.id)}
-                                        className="text-red-500 hover:text-red-700 transition-colors"
-                                        title="Xóa bài học và tất cả từ vựng"
-                                    >
-                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                        </svg>
-                                    </button>
-                                </div>
-                                {flashcards.filter(card => card.lessonId === lesson.id).length > 0 ? (
-                                    <ul className="divide-y divide-gray-100">
-                                        {flashcards
-                                            .filter(card => card.lessonId === lesson.id)
-                                            .map(card => (
-                                                <li key={card.id} className="flex justify-between items-center py-2">
-                                                    <span className="text-gray-700">
-                                                        <span className="font-semibold">{card.englishWord}</span> - {card.vietnameseWord}
-                                                    </span>
-                                                    <button
-                                                        onClick={() => handleDeleteFlashcard(card.id)}
-                                                        className="text-red-400 hover:text-red-600 text-sm"
-                                                        title="Xóa flashcard"
-                                                    >
-                                                        Xóa
-                                                    </button>
-                                                </li>
-                                            ))}
-                                    </ul>
-                                ) : (
-                                    <p className="text-gray-500 text-sm">Chưa có từ vựng nào trong bài học này.</p>
-                                )}
+                        {/* Private Lessons */}
+                        {privateLessons.length > 0 && (
+                            <div className="border border-gray-200 rounded-lg p-4 bg-white shadow-sm">
+                                <h3 className="text-xl font-medium text-gray-800 mb-3">Bài học Cá nhân của bạn</h3>
+                                {privateLessons.map(lesson => (
+                                    <div key={lesson.id} className="border-b border-gray-100 last:border-b-0 py-2">
+                                        <div className="flex justify-between items-center mb-1">
+                                            <span className="font-semibold text-gray-700">
+                                                {lesson.name} ({allFlashcards.filter(card => !card.isPublic && card.lessonId === lesson.id).length} từ)
+                                            </span>
+                                            <button
+                                                onClick={() => handleDeleteLesson(lesson.id, false)}
+                                                className="text-red-500 hover:text-red-700 transition-colors"
+                                                title="Xóa bài học và tất cả từ vựng"
+                                            >
+                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                                </svg>
+                                            </button>
+                                        </div>
+                                        {allFlashcards.filter(card => !card.isPublic && card.lessonId === lesson.id).length > 0 ? (
+                                            <ul className="text-sm ml-4">
+                                                {allFlashcards
+                                                    .filter(card => !card.isPublic && card.lessonId === lesson.id)
+                                                    .map(card => (
+                                                        <li key={card.id} className="flex justify-between items-center py-1">
+                                                            <span className="text-gray-600">
+                                                                {card.englishWord} - {card.vietnameseWord}
+                                                            </span>
+                                                            <button
+                                                                onClick={() => handleDeleteFlashcard(card.id, false)}
+                                                                className="text-red-400 hover:text-red-600 text-xs"
+                                                                title="Xóa flashcard"
+                                                            >
+                                                                Xóa
+                                                            </button>
+                                                        </li>
+                                                    ))}
+                                            </ul>
+                                        ) : (
+                                            <p className="text-gray-500 text-xs ml-4">Chưa có từ vựng nào trong bài học này.</p>
+                                        )}
+                                    </div>
+                                ))}
                             </div>
-                        ))}
+                        )}
+
+                        {/* Public Lessons */}
+                        {publicLessons.length > 0 && (
+                            <div className="border border-gray-200 rounded-lg p-4 bg-white shadow-sm">
+                                <h3 className="text-xl font-medium text-gray-800 mb-3">Bài học Công khai</h3>
+                                {publicLessons.map(lesson => (
+                                    <div key={lesson.id} className="border-b border-gray-100 last:border-b-0 py-2">
+                                        <div className="flex justify-between items-center mb-1">
+                                            <span className="font-semibold text-gray-700">
+                                                {lesson.name} ({allFlashcards.filter(card => card.isPublic && card.lessonId === lesson.id).length} từ)
+                                                {lesson.ownerId === userId ? " (Của bạn)" : ` (Tạo bởi: ${lesson.ownerId.substring(0, 8)}...)`}
+                                            </span>
+                                            {isTeacherMode && lesson.ownerId === userId && ( // Only allow teacher to delete their own public lesson
+                                                <button
+                                                    onClick={() => handleDeleteLesson(lesson.id, true)}
+                                                    className="text-red-500 hover:text-red-700 transition-colors"
+                                                    title="Xóa bài học công khai của bạn"
+                                                >
+                                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                                    </svg>
+                                                </button>
+                                            )}
+                                        </div>
+                                        {allFlashcards.filter(card => card.isPublic && card.lessonId === lesson.id).length > 0 ? (
+                                            <ul className="text-sm ml-4">
+                                                {allFlashcards
+                                                    .filter(card => card.isPublic && card.lessonId === lesson.id)
+                                                    .map(card => (
+                                                        <li key={card.id} className="flex justify-between items-center py-1">
+                                                            <span className="text-gray-600">
+                                                                {card.englishWord} - {card.vietnameseWord}
+                                                            </span>
+                                                            {isTeacherMode && card.ownerId === userId && ( // Only allow teacher to delete their own public flashcard
+                                                                <button
+                                                                    onClick={() => handleDeleteFlashcard(card.id, true)}
+                                                                    className="text-red-400 hover:text-red-600 text-xs"
+                                                                    title="Xóa flashcard công khai của bạn"
+                                                                >
+                                                                    Xóa
+                                                                </button>
+                                                            )}
+                                                        </li>
+                                                    ))}
+                                            </ul>
+                                        ) : (
+                                            <p className="text-gray-500 text-xs ml-4">Chưa có từ vựng nào trong bài học này.</p>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
@@ -576,9 +731,11 @@ const ManageVocabulary = ({ db, auth, userId, showMessage }) => {
 
 // Component for Review Configuration and starting tests
 const ReviewSection = ({ db, auth, userId, showMessage, setCurrentView, currentView }) => {
-    const [lessons, setLessons] = useState([]);
-    const [flashcards, setFlashcards] = useState([]);
-    const [selectedLessonIds, setSelectedLessonIds] = useState([]);
+    const [privateLessons, setPrivateLessons] = useState([]);
+    const [publicLessons, setPublicLessons] = useState([]);
+    const [allFlashcards, setAllFlashcards] = useState([]);
+    const [selectedPrivateLessonIds, setSelectedPrivateLessonIds] = useState([]);
+    const [selectedPublicLessonIds, setSelectedPublicLessonIds] = useState([]);
     const [numQuestions, setNumQuestions] = useState(10);
     const [testDuration, setTestDuration] = useState(60); // in seconds, for test mode
     const [testMode, setTestMode] = useState('flip-card'); // 'eng-vie', 'vie-eng', 'flip-card'
@@ -589,65 +746,100 @@ const ReviewSection = ({ db, auth, userId, showMessage, setCurrentView, currentV
     useEffect(() => {
         if (!db || !userId) return;
 
-        const lessonsQuery = query(collection(db, `artifacts/${appId}/users/${userId}/lessons`));
-        const unsubscribeLessons = onSnapshot(lessonsQuery, (snapshot) => {
-            const lessonsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setLessons(lessonsData);
+        // Listener for private lessons
+        const privateLessonsQuery = query(collection(db, `artifacts/${appId}/users/${userId}/lessons`));
+        const unsubscribePrivateLessons = onSnapshot(privateLessonsQuery, (snapshot) => {
+            const lessonsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), type: 'private' }));
+            setPrivateLessons(lessonsData);
         }, (error) => {
-            console.error("Error loading lessons for review:", error);
-            showMessage('Không thể tải bài học cho phần ôn tập.', 'error');
+            console.error("Error loading private lessons for review:", error);
+            showMessage('Không thể tải bài học cá nhân cho phần ôn tập.', 'error');
         });
 
-        const flashcardsQuery = query(collection(db, `artifacts/${appId}/users/${userId}/flashcards`));
-        const unsubscribeFlashcards = onSnapshot(flashcardsQuery, (snapshot) => {
-            const flashcardsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setFlashcards(flashcardsData);
+        // Listener for public lessons
+        const publicLessonsQuery = query(collection(db, `artifacts/${appId}/shared_lessons`));
+        const unsubscribePublicLessons = onSnapshot(publicLessonsQuery, (snapshot) => {
+            const lessonsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), type: 'public' }));
+            setPublicLessons(lessonsData);
         }, (error) => {
-            console.error("Error loading flashcards for review:", error);
-            showMessage('Không thể tải flashcard cho phần ôn tập.', 'error');
+            console.error("Error loading public lessons for review:", error);
+            showMessage('Không thể tải bài học công khai cho phần ôn tập.', 'error');
         });
+
+        // Listener for all flashcards (private and public)
+        const privateFlashcardsQuery = query(collection(db, `artifacts/${appId}/users/${userId}/flashcards`));
+        const unsubscribePrivateFlashcards = onSnapshot(privateFlashcardsQuery, (snapshot) => {
+            const privateCards = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isPublic: false }));
+            setAllFlashcards(prev => {
+                const publicCards = prev.filter(card => card.isPublic);
+                return [...publicCards, ...privateCards];
+            });
+        }, (error) => {
+            console.error("Error loading private flashcards for review:", error);
+            showMessage('Không thể tải flashcard cá nhân cho phần ôn tập.', 'error');
+        });
+
+        const publicFlashcardsQuery = query(collection(db, `artifacts/${appId}/shared_flashcards`));
+        const unsubscribePublicFlashcards = onSnapshot(publicFlashcardsQuery, (snapshot) => {
+            const publicCards = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isPublic: true }));
+            setAllFlashcards(prev => {
+                const privateCards = prev.filter(card => !card.isPublic);
+                return [...privateCards, ...publicCards];
+            });
+        }, (error) => {
+            console.error("Error loading public flashcards for review:", error);
+            showMessage('Không thể tải flashcard công khai cho phần ôn tập.', 'error');
+        });
+
 
         return () => {
-            unsubscribeLessons();
-            unsubscribeFlashcards();
+            unsubscribePrivateLessons();
+            unsubscribePublicLessons();
+            unsubscribePrivateFlashcards();
+            unsubscribePublicFlashcards();
         };
     }, [db, userId, showMessage]);
 
-    // Handle lesson selection (multi-select)
-    const handleLessonSelection = (e) => {
+    // Handle private lesson selection (multi-select)
+    const handlePrivateLessonSelection = (e) => {
         const { value, checked } = e.target;
         if (checked) {
-            setSelectedLessonIds(prev => [...prev, value]);
+            setSelectedPrivateLessonIds(prev => [...prev, value]);
         } else {
-            setSelectedLessonIds(prev => prev.filter(id => id !== value));
+            setSelectedPrivateLessonIds(prev => prev.filter(id => id !== value));
         }
     };
+
+    // Handle public lesson selection (multi-select)
+    const handlePublicLessonSelection = (e) => {
+        const { value, checked } = e.target;
+        if (checked) {
+            setSelectedPublicLessonIds(prev => [...prev, value]);
+        } else {
+            setSelectedPublicLessonIds(prev => prev.filter(id => id !== value));
+        }
+    };
+
 
     // Prepare and start the test/flip card session
     const startReviewSession = (useLastTest = false) => {
         let cardsToUse = [];
 
         if (useLastTest && lastTestFlashcards.length > 0) {
-            // Use the exact same content, but reshuffle the order
             cardsToUse = [...lastTestFlashcards].sort(() => 0.5 - Math.random()); // Reshuffle
             showMessage('Đang làm lại bài kiểm tra cũ với thứ tự mới.', 'info');
         } else {
-            if (flashcards.length === 0) {
-                showMessage('Chưa có từ vựng nào để ôn tập.', 'error');
-                return;
-            }
-
-            let filteredCards = flashcards;
-            if (selectedLessonIds.length > 0) {
-                filteredCards = flashcards.filter(card => selectedLessonIds.includes(card.lessonId));
-            }
+            // Combine flashcards from selected private and public lessons
+            let filteredCards = allFlashcards.filter(card =>
+                (card.isPublic && selectedPublicLessonIds.includes(card.lessonId)) ||
+                (!card.isPublic && selectedPrivateLessonIds.includes(card.lessonId))
+            );
 
             if (filteredCards.length === 0) {
                 showMessage('Không có từ vựng nào trong các bài học đã chọn.', 'error');
                 return;
             }
 
-            // Shuffle cards and select number of questions
             const shuffledCards = filteredCards.sort(() => 0.5 - Math.random());
             cardsToUse = shuffledCards.slice(0, Math.min(numQuestions, shuffledCards.length));
 
@@ -655,7 +847,6 @@ const ReviewSection = ({ db, auth, userId, showMessage, setCurrentView, currentV
                 showMessage('Không đủ từ vựng để tạo bài ôn tập/kiểm tra với số lượng yêu cầu.', 'error');
                 return;
             }
-            // Save this new set for potential re-testing
             setLastTestFlashcards(cardsToUse);
             showMessage('Bắt đầu bài kiểm tra mới.', 'success');
         }
@@ -668,52 +859,52 @@ const ReviewSection = ({ db, auth, userId, showMessage, setCurrentView, currentV
         }
     };
 
-    // Render the appropriate component based on currentView
-    if (currentView === 'test') {
-        return (
-            <Test
-                flashcards={testFlashcards}
-                duration={testDuration}
-                mode={testMode}
-                onTestEnd={() => {
-                    setCurrentView('review'); // Go back to review config after test
-                }}
-            />
-        );
-    } else if (currentView === 'flipcard') {
-        return (
-            <FlipCardMode
-                flashcards={testFlashcards}
-                onEnd={() => {
-                    setCurrentView('review'); // Go back to review config after flip card session
-                }}
-            />
-        );
-    }
-
-    // Default: Render review configuration
     return (
         <div className="p-6 rounded-lg shadow-inner bg-purple-50">
             <h2 className="text-2xl font-semibold text-purple-700 mb-4">Cấu hình Ôn tập</h2>
 
             <div className="mb-6">
                 <label className="block text-gray-700 text-sm font-bold mb-2">
-                    Chọn Bài học (có thể chọn nhiều để ôn tập hỗn hợp):
+                    Chọn Bài học Cá nhân của bạn:
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-48 overflow-y-auto border border-purple-200 rounded-md p-3 bg-white">
-                    {lessons.length === 0 ? (
-                        <p className="text-gray-500 col-span-full">Chưa có bài học nào để chọn.</p>
+                    {privateLessons.length === 0 ? (
+                        <p className="text-gray-500 col-span-full">Chưa có bài học cá nhân nào.</p>
                     ) : (
-                        lessons.map(lesson => (
+                        privateLessons.map(lesson => (
                             <label key={lesson.id} className="inline-flex items-center text-gray-700">
                                 <input
                                     type="checkbox"
                                     value={lesson.id}
-                                    checked={selectedLessonIds.includes(lesson.id)}
-                                    onChange={handleLessonSelection}
+                                    checked={selectedPrivateLessonIds.includes(lesson.id)}
+                                    onChange={handlePrivateLessonSelection}
                                     className="form-checkbox h-5 w-5 text-purple-600 rounded"
                                 />
                                 <span className="ml-2">{lesson.name}</span>
+                            </label>
+                        ))
+                    )}
+                </div>
+            </div>
+
+            <div className="mb-6">
+                <label className="block text-gray-700 text-sm font-bold mb-2">
+                    Chọn Bài học Công khai:
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-48 overflow-y-auto border border-purple-200 rounded-md p-3 bg-white">
+                    {publicLessons.length === 0 ? (
+                        <p className="text-gray-500 col-span-full">Chưa có bài học công khai nào.</p>
+                    ) : (
+                        publicLessons.map(lesson => (
+                            <label key={lesson.id} className="inline-flex items-center text-gray-700">
+                                <input
+                                    type="checkbox"
+                                    value={lesson.id}
+                                    checked={selectedPublicLessonIds.includes(lesson.id)}
+                                    onChange={handlePublicLessonSelection}
+                                    className="form-checkbox h-5 w-5 text-purple-600 rounded"
+                                />
+                                <span className="ml-2">{lesson.name} ({lesson.ownerId === userId ? 'Của bạn' : 'Khác'})</span>
                             </label>
                         ))
                     )}
@@ -734,7 +925,7 @@ const ReviewSection = ({ db, auth, userId, showMessage, setCurrentView, currentV
                 />
             </div>
 
-            {testMode !== 'flip-card' && ( // Only show duration for test mode
+            {testMode !== 'flip-card' && (
                 <div className="mb-6">
                     <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="testDuration">
                         Thời gian làm bài (giây):
@@ -988,7 +1179,7 @@ const Test = ({ flashcards, duration, mode, onTestEnd }) => {
     );
 };
 
-// New Component for Flip Card Mode
+// Component for Flip Card Mode
 const FlipCardMode = ({ flashcards, onEnd }) => {
     const [currentIndex, setCurrentIndex] = useState(0);
     const [isFlipped, setIsFlipped] = useState(false);
