@@ -1,1131 +1,1184 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, createContext, useContext } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, addDoc, doc, deleteDoc, onSnapshot, query } from 'firebase/firestore';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut } from 'firebase/auth';
+import { getFirestore, collection, query, onSnapshot, addDoc, doc, updateDoc, deleteDoc, getDocs, where } from 'firebase/firestore';
 
-// Define Firebase config and app ID from global variables provided by Canvas environment
-// These variables are available directly in the Canvas runtime, unlike process.env on Vercel.
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+// Tailwind CSS is assumed to be available.
+// lucide-react for icons (optional, could use inline SVGs or Font Awesome)
+// Install via npm: npm install lucide-react
 
-// The firestoreAppNamespace should be consistent with the Firebase rules.
-// In Canvas, it often maps to __app_id.
-const firestoreAppNamespace = appId;
+// --- Firebase Initialization and Context ---
+const FirebaseContext = createContext(null);
 
-
-// Main App Component
-const App = () => {
+const FirebaseProvider = ({ children }) => {
+    const [app, setApp] = useState(null);
     const [db, setDb] = useState(null);
     const [auth, setAuth] = useState(null);
     const [userId, setUserId] = useState(null);
-    const [loading, setLoading] = useState(true);
-    const [currentView, setCurrentView] = useState('manage'); // 'manage', 'review', 'test', 'flipcard'
-    const [message, setMessage] = useState('');
-    const [messageType, setMessageType] = useState(''); // 'success', 'error', 'info'
-    // Removed isTeacherMode state as public sharing/editing is removed
+    const [isAuthReady, setIsAuthReady] = useState(false); // New state to track auth readiness
 
-    // Initialize Firebase and authenticate user
     useEffect(() => {
-        const initFirebase = async () => {
-            try {
-                // Ensure Firebase config is loaded. For Canvas, this should always be provided.
-                if (!firebaseConfig || Object.keys(firebaseConfig).length === 0) {
-                    console.error("Firebase configuration is missing. Please ensure Canvas environment provides it.");
-                    setMessage('Lỗi cấu hình Firebase. Vui lòng kiểm tra môi trường Canvas.');
-                    setMessageType('error');
-                    setLoading(false);
-                    return;
-                }
+        try {
+            // Global variables provided by the Canvas environment
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+            const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-                const app = initializeApp(firebaseConfig);
-                const authInstance = getAuth(app);
-                const dbInstance = getFirestore(app);
-
-                setAuth(authInstance);
-                setDb(dbInstance);
-
-                // Use __initial_auth_token if available (for authenticated Canvas sessions), otherwise sign in anonymously.
-                if (initialAuthToken) {
-                    await signInWithCustomToken(authInstance, initialAuthToken);
-                } else {
-                    await signInAnonymously(authInstance);
-                }
-
-                const unsubscribe = onAuthStateChanged(authInstance, (user) => {
-                    if (user) {
-                        setUserId(user.uid);
-                    } else {
-                        // If no authenticated user, assign a unique ID for anonymous operations
-                        setUserId(crypto.randomUUID());
-                    }
-                    setLoading(false);
-                });
-
-                return () => unsubscribe();
-            } catch (error) {
-                console.error("Lỗi khởi tạo Firebase hoặc xác thực:", error);
-                setMessage('Lỗi khi khởi tạo ứng dụng. Vui lòng thử lại.');
-                setMessageType('error');
-                setLoading(false);
+            if (Object.keys(firebaseConfig).length === 0) {
+                console.error("Firebase config is missing. Please provide it in __firebase_config.");
+                return;
             }
-        };
 
-        initFirebase();
-    }, []); // Empty dependency array means this effect runs once on mount
+            const firebaseApp = initializeApp(firebaseConfig);
+            const firestoreDb = getFirestore(firebaseApp);
+            const firebaseAuth = getAuth(firebaseApp);
 
-    // Function to show transient messages
-    const showMessage = useCallback((msg, type) => {
-        setMessage(msg);
-        setMessageType(type);
-        const timer = setTimeout(() => {
-            setMessage('');
-            setMessageType('');
-        }, 3000);
-        return () => clearTimeout(timer);
-    }, []); // useCallback memoizes the function
+            setApp(firebaseApp);
+            setDb(firestoreDb);
+            setAuth(firebaseAuth);
 
-    if (loading) {
+            // Authentication listener
+            const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
+                if (user) {
+                    setUserId(user.uid);
+                    setIsAuthReady(true);
+                } else {
+                    // Sign in with custom token or anonymously if not authenticated
+                    try {
+                        if (initialAuthToken) {
+                            await signInWithCustomToken(firebaseAuth, initialAuthToken);
+                        } else {
+                            await signInAnonymously(firebaseAuth);
+                        }
+                    } catch (error) {
+                        console.error("Firebase authentication error:", error);
+                        // Fallback to a random ID if auth fails completely
+                        setUserId(crypto.randomUUID());
+                        setIsAuthReady(true);
+                    }
+                }
+            });
+
+            return () => unsubscribe(); // Cleanup auth listener on unmount
+        } catch (error) {
+            console.error("Failed to initialize Firebase:", error);
+        }
+    }, []);
+
+    // Ensure userId is set, even if auth fails, so other components can proceed with a random ID
+    useEffect(() => {
+        if (!userId && isAuthReady && auth && !auth.currentUser) {
+            setUserId(crypto.randomUUID()); // Assign a random ID if not authenticated and auth is ready
+        }
+    }, [isAuthReady, userId, auth]);
+
+    return (
+        <FirebaseContext.Provider value={{ app, db, auth, userId, isAuthReady }}>
+            {children}
+        </FirebaseContext.Provider>
+    );
+};
+
+const useFirebase = () => useContext(FirebaseContext);
+
+// --- Reusable Modal Component ---
+const Modal = ({ show, title, message, onClose, onConfirm, showConfirmButton = false }) => {
+    if (!show) return null;
+
+    return (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+                <h3 className="text-xl font-bold mb-4 text-gray-800">{title}</h3>
+                <p className="text-gray-700 mb-6">{message}</p>
+                <div className="flex justify-end space-x-3">
+                    {showConfirmButton && (
+                        <button
+                            onClick={onConfirm}
+                            className="px-5 py-2 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 transition-colors"
+                        >
+                            Xác nhận
+                        </button>
+                    )}
+                    <button
+                        onClick={onClose}
+                        className="px-5 py-2 rounded-lg bg-gray-200 text-gray-800 font-semibold hover:bg-gray-300 transition-colors"
+                    >
+                        Đóng
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// --- Loading Spinner Component ---
+const LoadingSpinner = () => (
+    <div className="flex justify-center items-center h-full">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+    </div>
+);
+
+// --- Main App Component ---
+const App = () => {
+    const { db, userId, isAuthReady } = useFirebase();
+    const [topics, setTopics] = useState([]);
+    const [vocabulary, setVocabulary] = useState([]);
+    const [view, setView] = useState('add'); // Changed initial view from 'home' to 'add'
+    const [modal, setModal] = useState({ show: false, title: '', message: '', onConfirm: null, showConfirmButton: false });
+    const [isLoading, setIsLoading] = useState(true);
+
+    // Fetch topics and vocabulary when Firebase is ready and userId is available
+    useEffect(() => {
+        if (db && userId && isAuthReady) {
+            setIsLoading(true);
+            // Fetch topics
+            const topicsCollectionRef = collection(db, `artifacts/${__app_id}/users/${userId}/topics`);
+            const unsubscribeTopics = onSnapshot(topicsCollectionRef, (snapshot) => {
+                const fetchedTopics = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                setTopics(fetchedTopics);
+            }, (error) => {
+                console.error("Error fetching topics:", error);
+                setModal({
+                    show: true,
+                    title: "Lỗi",
+                    message: "Không thể tải chủ đề. Vui lòng thử lại sau.",
+                    onClose: () => setModal({ ...modal, show: false })
+                });
+            });
+
+            // Fetch vocabulary
+            const vocabularyCollectionRef = collection(db, `artifacts/${__app_id}/users/${userId}/vocabulary`);
+            const unsubscribeVocabulary = onSnapshot(vocabularyCollectionRef, (snapshot) => {
+                const fetchedVocabulary = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                setVocabulary(fetchedVocabulary);
+                setIsLoading(false);
+            }, (error) => {
+                console.error("Error fetching vocabulary:", error);
+                setModal({
+                    show: true,
+                    title: "Lỗi",
+                    message: "Không thể tải từ vựng. Vui lòng thử lại sau.",
+                    onClose: () => setModal({ ...modal, show: false })
+                });
+                setIsLoading(false);
+            });
+
+            return () => {
+                unsubscribeTopics();
+                unsubscribeVocabulary();
+            };
+        }
+    }, [db, userId, isAuthReady]);
+
+    // Handle adding a new topic
+    const handleAddTopic = async (topicName) => {
+        if (!db || !userId) {
+            setModal({
+                show: true,
+                title: "Lỗi",
+                message: "Hệ thống chưa sẵn sàng. Vui lòng đợi hoặc thử lại.",
+                onClose: () => setModal({ ...modal, show: false })
+            });
+            return;
+        }
+        if (topics.some(t => t.name.toLowerCase() === topicName.toLowerCase())) {
+            setModal({
+                show: true,
+                title: "Thông báo",
+                message: `Chủ đề "${topicName}" đã tồn tại.`,
+                onClose: () => setModal({ ...modal, show: false })
+            });
+            return;
+        }
+        try {
+            await addDoc(collection(db, `artifacts/${__app_id}/users/${userId}/topics`), {
+                name: topicName,
+                createdAt: new Date()
+            });
+            setModal({
+                show: true,
+                title: "Thành công",
+                message: `Đã thêm chủ đề "${topicName}".`,
+                onClose: () => setModal({ ...modal, show: false })
+            });
+        } catch (e) {
+            console.error("Error adding topic: ", e);
+            setModal({
+                show: true,
+                title: "Lỗi",
+                message: "Không thể thêm chủ đề. Vui lòng thử lại.",
+                onClose: () => setModal({ ...modal, show: false })
+            });
+        }
+    };
+
+    // Handle adding a new flashcard
+    const handleAddFlashcard = async (english, vietnamese, topicId) => {
+        if (!db || !userId) {
+            setModal({
+                show: true,
+                title: "Lỗi",
+                message: "Hệ thống chưa sẵn sàng. Vui lòng đợi hoặc thử lại.",
+                onClose: () => setModal({ ...modal, show: false })
+            });
+            return;
+        }
+        try {
+            await addDoc(collection(db, `artifacts/${__app_id}/users/${userId}/vocabulary`), {
+                english: english,
+                vietnamese: vietnamese,
+                topicId: topicId,
+                createdAt: new Date()
+            });
+            setModal({
+                show: true,
+                title: "Thành công",
+                message: `Đã thêm từ: ${english} - ${vietnamese}`,
+                onClose: () => setModal({ ...modal, show: false })
+            });
+        } catch (e) {
+            console.error("Error adding flashcard: ", e);
+            setModal({
+                show: true,
+                title: "Lỗi",
+                message: "Không thể thêm từ vựng. Vui lòng thử lại.",
+                onClose: () => setModal({ ...modal, show: false })
+            });
+        }
+    };
+
+    // Handle bulk import
+    const handleBulkImport = async (text, topicId) => {
+        if (!db || !userId) {
+            setModal({
+                show: true,
+                title: "Lỗi",
+                message: "Hệ thống chưa sẵn sàng. Vui lòng đợi hoặc thử lại.",
+                onClose: () => setModal({ ...modal, show: false })
+            });
+            return;
+        }
+
+        const lines = text.split('\n').filter(line => line.trim() !== '');
+        let importedCount = 0;
+        let failedCount = 0;
+
+        for (const line of lines) {
+            const parts = line.split(/[-:]/).map(part => part.trim()); // Split by hyphen or colon
+            if (parts.length >= 2 && parts[0] && parts[1]) {
+                const english = parts[0];
+                const vietnamese = parts[1];
+                try {
+                    await addDoc(collection(db, `artifacts/${__app_id}/users/${userId}/vocabulary`), {
+                        english: english,
+                        vietnamese: vietnamese,
+                        topicId: topicId,
+                        createdAt: new Date()
+                    });
+                    importedCount++;
+                } catch (e) {
+                    console.error("Error adding bulk flashcard: ", line, e);
+                    failedCount++;
+                }
+            } else {
+                failedCount++;
+            }
+        }
+        setModal({
+            show: true,
+            title: "Kết quả nhập hàng loạt",
+            message: `Đã nhập thành công ${importedCount} từ. Thất bại ${failedCount} từ.`,
+            onClose: () => setModal({ ...modal, show: false })
+        });
+    };
+
+
+    if (isLoading) {
         return (
-            <div className="flex items-center justify-center min-h-screen bg-gray-100">
-                <div className="text-xl text-gray-700">Đang tải ứng dụng...</div>
+            <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
+                <LoadingSpinner />
+                <p className="mt-4 text-gray-600">Đang tải dữ liệu và xác thực...</p>
             </div>
         );
     }
 
     return (
-        <div className="min-h-screen bg-gray-100 font-inter p-4 flex flex-col items-center">
-            <h1 className="text-4xl font-bold text-blue-800 mb-6 text-center">
-                Ứng Dụng Flashcard Cá Nhân
-            </h1>
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex flex-col font-inter">
+            <header className="bg-white shadow-md p-4 sticky top-0 z-40">
+                <nav className="container mx-auto flex flex-col sm:flex-row justify-between items-center">
+                    <h1 className="text-3xl font-extrabold text-blue-700 mb-2 sm:mb-0">Flashcard App</h1>
+                    <div className="flex space-x-3">
+                        {/* Removed NavLink for 'home' */}
+                        <NavLink currentView={view} targetView="add" setView={setView}>Thêm từ</NavLink>
+                        <NavLink currentView={view} targetView="quiz" setView={setView}>Kiểm tra</NavLink>
+                        <NavLink currentView={view} targetView="study" setView={setView}>Học nhanh</NavLink>
+                    </div>
+                </nav>
+            </header>
 
-            {userId && (
-                <div className="text-sm text-gray-600 mb-4 flex items-center space-x-4">
-                    <span>ID người dùng của bạn: <span className="font-mono bg-gray-200 px-2 py-1 rounded">{userId}</span></span>
-                    {/* Removed teacher mode checkbox */}
+            <main className="flex-grow container mx-auto p-4 py-8">
+                <div className="text-right text-sm text-gray-600 mb-4">
+                    ID người dùng của bạn: <span className="font-mono bg-gray-100 p-1 rounded-md">{userId || 'Đang tải...'}</span>
                 </div>
-            )}
 
-            {message && (
-                <div
-                    className={`p-3 mb-4 rounded-lg shadow-md text-sm ${
-                        messageType === 'success' ? 'bg-green-100 text-green-700' :
-                        messageType === 'error' ? 'bg-red-100 text-red-700' :
-                        'bg-blue-100 text-blue-700'
-                    }`}
-                >
-                    {message}
+                {/* Removed HomeView rendering */}
+                {view === 'add' && (
+                    <FlashcardInputForm
+                        topics={topics}
+                        onAddTopic={handleAddTopic}
+                        onAddFlashcard={handleAddFlashcard}
+                        onBulkImport={handleBulkImport}
+                    />
+                )}
+                {view === 'quiz' && (
+                    <QuizComponent
+                        vocabulary={vocabulary}
+                        topics={topics}
+                        db={db}
+                        userId={userId}
+                        appId={__app_id} // Pass appId for quiz history
+                        setModal={setModal}
+                    />
+                )}
+                {view === 'study' && (
+                    <StudyModeComponent
+                        vocabulary={vocabulary}
+                        topics={topics}
+                        setModal={setModal}
+                    />
+                )}
+            </main>
+
+            <footer className="bg-gray-800 text-white p-4 mt-8">
+                <div className="container mx-auto text-center text-sm">
+                    © 2024 Flashcard App. Powered by React & Firebase.
                 </div>
-            )}
+            </footer>
 
-            <nav className="mb-8 flex space-x-4">
-                <button
-                    onClick={() => setCurrentView('manage')}
-                    className={`px-6 py-3 rounded-full font-semibold transition-all duration-200 ${
-                        currentView === 'manage' ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-blue-600 border border-blue-300 hover:bg-blue-50'
-                    }`}
-                >
-                    Quản lý Từ vựng
-                </button>
-                <button
-                    onClick={() => setCurrentView('review')}
-                    className={`px-6 py-3 rounded-full font-semibold transition-all duration-200 ${
-                        currentView === 'review' || currentView === 'test' || currentView === 'flipcard' ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-blue-600 border border-blue-300 hover:bg-blue-50'
-                    }`}
-                >
-                    Ôn tập / Kiểm tra
-                </button>
-            </nav>
-
-            <div className="w-full max-w-4xl bg-white p-8 rounded-xl shadow-2xl">
-                {currentView === 'manage' && db && auth && userId && (
-                    <ManageVocabulary db={db} auth={auth} userId={userId} showMessage={showMessage} firestoreAppNamespace={firestoreAppNamespace} />
-                )}
-                {(currentView === 'review' || currentView === 'test' || currentView === 'flipcard') && db && auth && userId && (
-                    <ReviewSection db={db} auth={auth} userId={userId} showMessage={showMessage} setCurrentView={setCurrentView} currentView={currentView} firestoreAppNamespace={firestoreAppNamespace} />
-                )}
-            </div>
+            <Modal
+                show={modal.show}
+                title={modal.title}
+                message={modal.message}
+                onClose={() => setModal({ ...modal, show: false })}
+                onConfirm={modal.onConfirm}
+                showConfirmButton={modal.showConfirmButton}
+            />
         </div>
     );
 };
 
-// Component to manage vocabulary (add, import, list)
-const ManageVocabulary = ({ db, auth, userId, showMessage, firestoreAppNamespace }) => { // Removed isTeacherMode prop
-    const [privateLessons, setPrivateLessons] = useState([]); // Only private lessons now
-    const [allFlashcards, setAllFlashcards] = useState([]); // Store all flashcards (now only private)
-    const [newLessonName, setNewLessonName] = useState('');
-    // Removed isNewLessonPublic state
+// --- Navigation Link Component ---
+const NavLink = ({ currentView, targetView, setView, children }) => (
+    <button
+        onClick={() => setView(targetView)}
+        className={`px-4 py-2 rounded-lg font-medium transition-colors duration-200
+            ${currentView === targetView
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'text-gray-700 hover:bg-gray-100'
+            }`}
+    >
+        {children}
+    </button>
+);
+
+// --- Home View Component ---
+// This component is no longer used but kept for reference if needed later.
+const HomeView = ({ setView, vocabularyCount, topicCount }) => (
+    <section className="bg-white rounded-xl shadow-xl p-8 max-w-2xl mx-auto text-center animate-fade-in">
+        <h2 className="text-4xl font-extrabold text-blue-800 mb-6">Chào mừng đến với Flashcard App!</h2>
+        <p className="text-lg text-gray-700 mb-8 leading-relaxed">
+            Học từ vựng tiếng Anh chưa bao giờ dễ dàng đến thế. Quản lý các bộ flashcard của bạn, kiểm tra bản thân và theo dõi tiến độ.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+            <div className="bg-blue-50 p-6 rounded-lg shadow-inner">
+                <h3 className="text-xl font-semibold text-blue-700">Tổng số từ vựng</h3>
+                <p className="text-5xl font-bold text-blue-900 mt-2">{vocabularyCount}</p>
+            </div>
+            <div className="bg-indigo-50 p-6 rounded-lg shadow-inner">
+                <h3 className="text-xl font-semibold text-indigo-700">Tổng số chủ đề</h3>
+                <p className="text-5xl font-bold text-indigo-900 mt-2">{topicCount}</p>
+            </div>
+        </div>
+        <div className="flex flex-col sm:flex-row justify-center space-y-4 sm:space-y-0 sm:space-x-4">
+            <button
+                onClick={() => setView('add')}
+                className="bg-green-600 text-white px-8 py-3 rounded-lg text-lg font-semibold hover:bg-green-700 transition-transform transform hover:scale-105 shadow-lg"
+            >
+                Thêm từ vựng mới
+            </button>
+            <button
+                onClick={() => setView('quiz')}
+                className="bg-purple-600 text-white px-8 py-3 rounded-lg text-lg font-semibold hover:bg-purple-700 transition-transform transform hover:scale-105 shadow-lg"
+            >
+                Bắt đầu kiểm tra
+            </button>
+        </div>
+    </section>
+);
+
+
+// --- Flashcard Input Form Component ---
+const FlashcardInputForm = ({ topics, onAddTopic, onAddFlashcard, onBulkImport }) => {
     const [englishWord, setEnglishWord] = useState('');
     const [vietnameseWord, setVietnameseWord] = useState('');
-    const [selectedLessonId, setSelectedLessonId] = useState(''); // Only private lesson ID now
+    const [selectedTopic, setSelectedTopic] = useState(''); // Stores topic ID
+    const [newTopicName, setNewTopicName] = useState('');
     const [bulkText, setBulkText] = useState('');
-    const [bulkLessonId, setBulkLessonId] = useState(''); // Only private lesson ID now
-    const [ocrLoading, setOcrLoading] = useState(false);
+    const [bulkImportTopic, setBulkImportTopic] = useState(''); // Stores topic ID for bulk import
 
-    // Fetch lessons and flashcards
-    useEffect(() => {
-        if (!db || !userId || !firestoreAppNamespace) return;
-
-        // Listener for private lessons only
-        const privateLessonsQuery = query(collection(db, `artifacts/${firestoreAppNamespace}/users/${userId}/lessons`));
-        const unsubscribePrivateLessons = onSnapshot(privateLessonsQuery, (snapshot) => {
-            const lessonsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isPublic: false })); // isPublic is always false now
-            setPrivateLessons(lessonsData);
-        }, (error) => {
-            console.error("Error loading private lessons:", error);
-            showMessage('Không thể tải bài học cá nhân.', 'error');
-        });
-
-        // Listener for private flashcards only
-        const privateFlashcardsQuery = query(collection(db, `artifacts/${firestoreAppNamespace}/users/${userId}/flashcards`));
-        const unsubscribePrivateFlashcards = onSnapshot(privateFlashcardsQuery, (snapshot) => {
-            const cardsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isPublic: false })); // isPublic is always false now
-            setAllFlashcards(cardsData); // No merging needed, as no public cards
-        }, (error) => {
-            console.error("Error loading private flashcards:", error);
-            showMessage('Không thể tải flashcard cá nhân.', 'error');
-        });
-
-        return () => {
-            unsubscribePrivateLessons();
-            unsubscribePrivateFlashcards();
-        };
-    }, [db, userId, showMessage, firestoreAppNamespace]);
-
-    // Set default selected lesson if available and not already set
-    useEffect(() => {
-        if (privateLessons.length > 0 && !selectedLessonId) {
-            setSelectedLessonId(privateLessons[0].id);
-            setBulkLessonId(privateLessons[0].id);
-        }
-    }, [privateLessons, selectedLessonId]);
-
-
-    // Helper to determine if a lesson is public (now always false for management)
-    const getLessonType = (lessonId) => {
-        // Since we removed public functionality, this will always return false for lessons in ManageVocabulary
-        // However, the prop `isPublic` might still be present on existing data in DB, so keep filtering by `!card.isPublic` for displaying purposes.
-        return false;
-    };
-
-    // Handle adding a new lesson
-    const handleAddLesson = async () => {
-        if (!newLessonName.trim() || !db || !userId || !firestoreAppNamespace) {
-            showMessage('Tên bài học không được trống và Firebase chưa sẵn sàng.', 'error');
-            return;
-        }
-
-        // Lesson path is always private now
-        const lessonCollectionPath = `artifacts/${firestoreAppNamespace}/users/${userId}/lessons`;
-        try {
-            await addDoc(collection(db, lessonCollectionPath), {
-                name: newLessonName.trim(),
-                ownerId: userId,
-                createdAt: new Date(),
-            });
-            setNewLessonName('');
-            // Removed setIsNewLessonPublic(false);
-            showMessage('Thêm bài học thành công!', 'success');
-        } catch (e) {
-            console.error("Lỗi khi thêm bài học:", e);
-            showMessage('Lỗi khi thêm bài học.', 'error');
-        }
-    };
-
-    // Handle adding a single flashcard
-    const handleAddFlashcard = async () => {
-        if (!englishWord.trim() || !vietnameseWord.trim() || !selectedLessonId || !db || !userId || !firestoreAppNamespace) {
-            showMessage('Vui lòng điền đầy đủ từ vựng và chọn bài học.', 'error');
-            return;
-        }
-
-        // Flashcard path is always private now
-        const flashcardCollectionPath = `artifacts/${firestoreAppNamespace}/users/${userId}/flashcards`;
-
-        try {
-            await addDoc(collection(db, flashcardCollectionPath), {
-                englishWord: englishWord.trim(),
-                vietnameseWord: vietnameseWord.trim(),
-                lessonId: selectedLessonId,
-                ownerId: userId,
-                isPublic: false, // Always false now
-                createdAt: new Date(),
-            });
+    const handleSubmitFlashcard = (e) => {
+        e.preventDefault();
+        if (englishWord.trim() && vietnameseWord.trim() && selectedTopic) {
+            onAddFlashcard(englishWord.trim(), vietnameseWord.trim(), selectedTopic);
             setEnglishWord('');
             setVietnameseWord('');
-            showMessage('Thêm flashcard thành công!', 'success');
-        } catch (e) {
-            console.error("Lỗi khi thêm flashcard:", e);
-            showMessage('Lỗi khi thêm flashcard.', 'error');
+        } else {
+            // Use a custom modal instead of alert
+            // Placeholder: alert('Vui lòng điền đầy đủ từ tiếng Anh, tiếng Việt và chọn chủ đề.');
         }
     };
 
-    // Handle bulk import of flashcards
-    const handleBulkImport = async () => {
-        if (!bulkText.trim() || !bulkLessonId || !db || !userId || !firestoreAppNamespace) {
-            showMessage('Vui lòng nhập văn bản và chọn bài học.', 'error');
-            return;
+    const handleAddNewTopic = (e) => {
+        e.preventDefault();
+        if (newTopicName.trim()) {
+            onAddTopic(newTopicName.trim());
+            setNewTopicName('');
+        } else {
+            // Placeholder: alert('Vui lòng nhập tên chủ đề mới.');
         }
+    };
 
-        // Flashcard path is always private now
-        const flashcardCollectionPath = `artifacts/${firestoreAppNamespace}/users/${userId}/flashcards`;
-
-        const lines = bulkText.split('\n').filter(line => line.trim() !== '');
-        const newFlashcards = [];
-        for (const line of lines) {
-            const parts = line.split('-').map(part => part.trim());
-            if (parts.length >= 2) {
-                newFlashcards.push({
-                    englishWord: parts[0],
-                    vietnameseWord: parts.slice(1).join(' - '),
-                    lessonId: bulkLessonId,
-                    ownerId: userId,
-                    isPublic: false, // Always false now
-                    createdAt: new Date(),
-                });
-            }
-        }
-
-        if (newFlashcards.length === 0) {
-            showMessage('Không tìm thấy từ vựng hợp lệ nào trong văn bản.', 'error');
-            return;
-        }
-
-        try {
-            await Promise.all(newFlashcards.map(card =>
-                addDoc(collection(db, flashcardCollectionPath), card)
-            ));
+    const handleBulkSubmit = (e) => {
+        e.preventDefault();
+        if (bulkText.trim() && bulkImportTopic) {
+            onBulkImport(bulkText.trim(), bulkImportTopic);
             setBulkText('');
-            showMessage(`Đã thêm ${newFlashcards.length} flashcard thành công!`, 'success');
-        } catch (e) {
-            console.error("Lỗi khi nhập hàng loạt:", e);
-            showMessage('Lỗi khi nhập hàng loạt flashcard.', 'error');
+        } else {
+            // Placeholder: alert('Vui lòng nhập văn bản và chọn chủ đề cho nhập hàng loạt.');
         }
     };
-
-    // Handle image upload and OCR
-    const handleImageUploadAndOCR = async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        setOcrLoading(true);
-        showMessage('Đang phân tích hình ảnh, vui lòng đợi...', 'info');
-
-        const reader = new FileReader();
-        reader.onloadend = async () => {
-            const base64ImageData = reader.result.split(',')[1];
-
-            try {
-                const prompt = "Extract all English words and their Vietnamese meanings from this image. Present them as 'English Word - Vietnamese Meaning' on separate lines. If no Vietnamese meaning is available, just provide the English word. Ignore any other text not related to vocabulary pairs.";
-                const payload = {
-                    contents: [
-                        {
-                            role: "user",
-                            parts: [{ text: prompt }, { inlineData: { mimeType: file.type, data: base64ImageData } }]
-                        }
-                    ],
-                };
-                const apiKey = ""; // API key for Gemini is handled by the environment, keep it empty string.
-                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-
-                const response = await fetch(apiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                const result = await response.json();
-                if (result.candidates && result.candidates.length > 0 && result.candidates[0].content && result.candidates[0].content.parts && result.candidates[0].content.parts.length > 0) {
-                    const extractedText = result.candidates[0].content.parts[0].text;
-                    setBulkText(extractedText);
-                    showMessage('Đã trích xuất văn bản thành công! Vui lòng kiểm tra và thêm vào bài học.', 'success');
-                } else {
-                    showMessage('Không thể trích xuất văn bản từ hình ảnh. Vui lòng thử lại.', 'error');
-                    console.error("Unexpected API response structure:", result);
-                }
-            } catch (error) {
-                console.error("Error during OCR process:", error);
-                showMessage('Lỗi khi xử lý hình ảnh: ' + error.message, 'error');
-            } finally {
-                setOcrLoading(false);
-            }
-        };
-        reader.readAsDataURL(file);
-    };
-
-    // Delete lesson and associated flashcards
-    const handleDeleteLesson = async (lessonId) => { // Removed isPublicLesson parameter
-        if (!db || !userId || !firestoreAppNamespace) return;
-
-        // Lesson path is always private now
-        const collectionPath = `artifacts/${firestoreAppNamespace}/users/${userId}/lessons`;
-        const flashcardCollectionPath = `artifacts/${firestoreAppNamespace}/users/${userId}/flashcards`;
-
-        const userConfirmed = await new Promise(resolve => {
-            const confirmModal = document.createElement('div');
-            confirmModal.className = "fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50";
-            confirmModal.innerHTML = `
-                <div class="bg-white p-8 rounded-lg shadow-xl max-w-sm w-full">
-                    <h3 class="text-lg font-semibold mb-4">Xác nhận xóa</h3>
-                    <p class="mb-6">Bạn có chắc chắn muốn xóa bài học này và tất cả từ vựng liên quan không?</p>
-                    <div class="flex justify-end space-x-3">
-                        <button id="cancelBtn" class="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300">Hủy</button>
-                        <button id="confirmBtn" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700">Xóa</button>
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(confirmModal);
-
-            document.getElementById('confirmBtn').onclick = () => {
-                document.body.removeChild(confirmModal);
-                resolve(true);
-            };
-            document.getElementById('cancelBtn').onclick = () => {
-                document.body.removeChild(confirmModal);
-                resolve(false);
-            };
-        });
-
-        if (!userConfirmed) return;
-
-        try {
-            // Delete lesson document
-            await deleteDoc(doc(db, collectionPath, lessonId));
-
-            // Delete associated flashcards (only private cards now)
-            const cardsToDelete = allFlashcards.filter(card => card.lessonId === lessonId); // No isPublic filter needed now
-            await Promise.all(cardsToDelete.map(card =>
-                deleteDoc(doc(db, flashcardCollectionPath, card.id))
-            ));
-            showMessage('Xóa bài học và các flashcard liên quan thành công!', 'success');
-        } catch (error) {
-            console.error("Lỗi khi xóa bài học:", error);
-            showMessage('Lỗi khi xóa bài học.', 'error');
-        }
-    };
-
-    // Delete a single flashcard
-    const handleDeleteFlashcard = async (cardId) => { // Removed isPublicCard parameter
-        if (!db || !userId || !firestoreAppNamespace) return;
-
-        // Flashcard path is always private now
-        const flashcardCollectionPath = `artifacts/${firestoreAppNamespace}/users/${userId}/flashcards`;
-
-        const userConfirmed = await new Promise(resolve => {
-            const confirmModal = document.createElement('div');
-            confirmModal.className = "fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50";
-            confirmModal.innerHTML = `
-                <div class="bg-white p-8 rounded-lg shadow-xl max-w-sm w-full">
-                    <h3 class="text-lg font-semibold mb-4">Xác nhận xóa</h3>
-                    <p class="mb-6">Bạn có chắc chắn muốn xóa flashcard này?</p>
-                    <div class="flex justify-end space-x-3">
-                        <button id="cancelBtn" class="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300">Hủy</button>
-                        <button id="confirmBtn" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700">Xóa</button>
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(confirmModal);
-
-            document.getElementById('confirmBtn').onclick = () => {
-                document.body.removeChild(confirmModal);
-                resolve(true);
-            };
-            document.getElementById('cancelBtn').onclick = () => {
-                document.body.removeChild(confirmModal);
-                resolve(false);
-            };
-        });
-
-        if (!userConfirmed) return;
-
-        try {
-            await deleteDoc(doc(db, flashcardCollectionPath, cardId));
-            showMessage('Xóa flashcard thành công!', 'success');
-        } catch (error) {
-            console.error("Lỗi khi xóa flashcard:", error);
-            showMessage('Lỗi khi xóa flashcard.', 'error');
-        }
-    };
-
-
-    // allAvailableLessons now only includes private lessons
-    const allAvailableLessons = privateLessons;
-
 
     return (
-        <div className="space-y-8">
-            {/* Thêm bài học mới */}
-            <div className="bg-blue-50 p-6 rounded-lg shadow-inner">
-                <h2 className="text-2xl font-semibold text-blue-700 mb-4">Thêm Bài học mới</h2>
-                <div className="flex flex-col sm:flex-row gap-3 items-center">
-                    <input
-                        type="text"
-                        placeholder="Tên bài học (VD: Bài 1, Từ vựng IELTS...)"
-                        value={newLessonName}
-                        onChange={(e) => setNewLessonName(e.target.value)}
-                        className="flex-grow p-3 border border-blue-300 rounded-md focus:ring-2 focus:ring-blue-400 outline-none"
-                    />
-                    {/* Removed isTeacherMode checkbox */}
+        <section className="bg-white rounded-xl shadow-xl p-8 max-w-4xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Thêm từ vựng đơn lẻ */}
+            <div className="border-r border-gray-200 lg:pr-8">
+                <h2 className="text-3xl font-bold text-blue-700 mb-6">Thêm từ vựng mới</h2>
+                <form onSubmit={handleSubmitFlashcard} className="space-y-4">
+                    <div>
+                        <label htmlFor="englishWord" className="block text-gray-700 text-sm font-semibold mb-2">
+                            Từ tiếng Anh:
+                        </label>
+                        <input
+                            type="text"
+                            id="englishWord"
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            value={englishWord}
+                            onChange={(e) => setEnglishWord(e.target.value)}
+                            required
+                        />
+                    </div>
+                    <div>
+                        <label htmlFor="vietnameseWord" className="block text-gray-700 text-sm font-semibold mb-2">
+                            Nghĩa tiếng Việt:
+                        </label>
+                        <input
+                            type="text"
+                            id="vietnameseWord"
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            value={vietnameseWord}
+                            onChange={(e) => setVietnameseWord(e.target.value)}
+                            required
+                        />
+                    </div>
+                    <div>
+                        <label htmlFor="selectTopic" className="block text-gray-700 text-sm font-semibold mb-2">
+                            Chọn chủ đề:
+                        </label>
+                        <select
+                            id="selectTopic"
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            value={selectedTopic}
+                            onChange={(e) => setSelectedTopic(e.target.value)}
+                            required
+                        >
+                            <option value="">-- Chọn chủ đề --</option>
+                            {topics.map((topic) => (
+                                <option key={topic.id} value={topic.id}>
+                                    {topic.name}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
                     <button
-                        onClick={handleAddLesson}
-                        className="px-6 py-3 bg-blue-600 text-white rounded-md font-semibold hover:bg-blue-700 transition-colors shadow-md"
+                        type="submit"
+                        className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold text-lg hover:bg-blue-700 transition-colors shadow-md"
                     >
-                        Thêm Bài học
+                        Thêm Flashcard
                     </button>
+                </form>
+
+                {/* Thêm chủ đề mới */}
+                <div className="mt-8 pt-6 border-t border-gray-200">
+                    <h3 className="text-2xl font-bold text-blue-700 mb-4">Hoặc tạo chủ đề mới</h3>
+                    <form onSubmit={handleAddNewTopic} className="flex space-x-2">
+                        <input
+                            type="text"
+                            className="flex-grow px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="Tên chủ đề mới"
+                            value={newTopicName}
+                            onChange={(e) => setNewTopicName(e.target.value)}
+                            required
+                        />
+                        <button
+                            type="submit"
+                            className="bg-indigo-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-indigo-700 transition-colors shadow-md"
+                        >
+                            Tạo chủ đề
+                        </button>
+                    </form>
                 </div>
             </div>
 
-            {/* Nhập từ vựng lẻ */}
-            <div className="bg-green-50 p-6 rounded-lg shadow-inner">
-                <h2 className="text-2xl font-semibold text-green-700 mb-4">Nhập Từ vựng lẻ</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <input
-                        type="text"
-                        placeholder="Từ tiếng Anh"
-                        value={englishWord}
-                        onChange={(e) => setEnglishWord(e.target.value)}
-                        className="p-3 border border-green-300 rounded-md focus:ring-2 focus:ring-green-400 outline-none"
-                    />
-                    <input
-                        type="text"
-                        placeholder="Nghĩa tiếng Việt"
-                        value={vietnameseWord}
-                        onChange={(e) => setVietnameseWord(e.target.value)}
-                        className="p-3 border border-green-300 rounded-md focus:ring-2 focus:ring-green-400 outline-none"
-                    />
-                    <select
-                        value={selectedLessonId}
-                        onChange={(e) => setSelectedLessonId(e.target.value)}
-                        className="p-3 border border-green-300 rounded-md focus:ring-2 focus:ring-green-400 outline-none col-span-1 md:col-span-2"
-                    >
-                        <option value="">-- Chọn bài học --</option>
-                        {privateLessons.map(lesson => (
-                            <option key={lesson.id} value={lesson.id}>{lesson.name} (Cá nhân)</option>
-                        ))}
-                        {/* Removed public lessons options */}
-                    </select>
-                </div>
-                <button
-                    onClick={handleAddFlashcard}
-                    className="mt-4 w-full px-6 py-3 bg-green-600 text-white rounded-md font-semibold hover:bg-green-700 transition-colors shadow-md"
-                >
-                    Thêm Flashcard
-                </button>
-            </div>
-
-            {/* Nhập từ vựng hàng loạt từ văn bản hoặc hình ảnh */}
-            <div className="bg-yellow-50 p-6 rounded-lg shadow-inner">
-                <h2 className="text-2xl font-semibold text-yellow-700 mb-4">Nhập Từ vựng hàng loạt</h2>
-                <p className="text-sm text-gray-600 mb-3">
-                    Mỗi dòng một từ, định dạng: <span className="font-mono bg-yellow-100 p-1 rounded">English Word - Nghĩa tiếng Việt</span>
+            {/* Nhập hàng loạt */}
+            <div className="lg:pl-8">
+                <h2 className="text-3xl font-bold text-blue-700 mb-6">Nhập hàng loạt từ văn bản</h2>
+                <p className="text-gray-600 mb-4 text-sm">
+                    Dán văn bản từ vựng của bạn vào đây. Mỗi cặp từ tiếng Anh-Việt trên một dòng, phân cách bởi dấu gạch ngang (-) hoặc dấu hai chấm (:).
+                    <br />Ví dụ: <code className="bg-gray-100 p-1 rounded text-xs">hello - xin chào</code> hoặc <code className="bg-gray-100 p-1 rounded text-xs">book: sách</code>
                 </p>
-                <textarea
-                    placeholder="Nhập từ vựng hàng loạt vào đây (VD: Hello - Xin chào&#10;Goodbye - Tạm biệt) hoặc sử dụng tính năng 'Nhận diện từ hình ảnh' bên dưới."
-                    value={bulkText}
-                    onChange={(e) => setBulkText(e.target.value)}
-                    rows="6"
-                    className="w-full p-3 border border-yellow-300 rounded-md focus:ring-2 focus:ring-yellow-400 outline-none resize-y"
-                ></textarea>
-
-                <div className="mt-4 mb-4">
-                    <label className="block text-gray-700 text-sm font-bold mb-2">
-                        Nhận diện từ vựng từ hình ảnh:
-                    </label>
-                    <input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleImageUploadAndOCR}
-                        className="w-full text-gray-700 bg-white border border-yellow-300 rounded-md p-2 cursor-pointer"
-                        disabled={ocrLoading}
-                    />
-                    {ocrLoading && (
-                        <p className="text-blue-500 text-sm mt-2">Đang xử lý hình ảnh... Vui lòng đợi.</p>
-                    )}
-                </div>
-
-                <select
-                    value={bulkLessonId}
-                    onChange={(e) => setBulkLessonId(e.target.value)}
-                    className="mt-3 w-full p-3 border border-yellow-300 rounded-md focus:ring-2 focus:ring-yellow-400 outline-none"
-                >
-                    <option value="">-- Chọn bài học cho hàng loạt --</option>
-                     {privateLessons.map(lesson => (
-                        <option key={lesson.id} value={lesson.id}>{lesson.name} (Cá nhân)</option>
-                    ))}
-                    {/* Removed public lessons options */}
-                </select>
-                <button
-                    onClick={handleBulkImport}
-                    className="mt-4 w-full px-6 py-3 bg-yellow-600 text-white rounded-md font-semibold hover:bg-yellow-700 transition-colors shadow-md"
-                >
-                    Thêm Từ vựng hàng loạt
-                </button>
-            </div>
-
-            {/* Danh sách Bài học và Từ vựng */}
-            <div className="bg-gray-50 p-6 rounded-lg shadow-inner">
-                <h2 className="text-2xl font-semibold text-gray-700 mb-4">Danh sách Bài học và Từ vựng</h2>
-                {privateLessons.length === 0 ? ( // Only check private lessons now
-                    <p className="text-gray-500">Chưa có bài học nào. Hãy thêm một bài học mới!</p>
-                ) : (
-                    <div className="space-y-6">
-                        {/* Private Lessons */}
-                        {privateLessons.length > 0 && (
-                            <div className="border border-gray-200 rounded-lg p-4 bg-white shadow-sm">
-                                <h3 className="text-xl font-medium text-gray-800 mb-3">Bài học Cá nhân của bạn</h3>
-                                {privateLessons.map(lesson => (
-                                    <div key={lesson.id} className="border-b border-gray-100 last:border-b-0 py-2">
-                                        <div className="flex justify-between items-center mb-1">
-                                            <span className="font-semibold text-gray-700">
-                                                {lesson.name} ({allFlashcards.filter(card => card.lessonId === lesson.id).length} từ) {/* No isPublic filter needed now */}
-                                            </span>
-                                            <button
-                                                onClick={() => handleDeleteLesson(lesson.id)} // No isPublicLesson parameter
-                                                className="text-red-500 hover:text-red-700 transition-colors"
-                                                title="Xóa bài học và tất cả từ vựng"
-                                            >
-                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                                </svg>
-                                            </button>
-                                        </div>
-                                        {allFlashcards.filter(card => card.lessonId === lesson.id).length > 0 ? ( // No isPublic filter needed now
-                                            <ul className="text-sm ml-4">
-                                                {allFlashcards
-                                                    .filter(card => card.lessonId === lesson.id) // No isPublic filter needed now
-                                                    .map(card => (
-                                                        <li key={card.id} className="flex justify-between items-center py-1">
-                                                            <span className="text-gray-600">
-                                                                {card.englishWord} - {card.vietnameseWord}
-                                                            </span>
-                                                            <button
-                                                                onClick={() => handleDeleteFlashcard(card.id)} // No isPublicCard parameter
-                                                                className="text-red-400 hover:text-red-600 text-xs"
-                                                                title="Xóa flashcard"
-                                                            >
-                                                                Xóa
-                                                            </button>
-                                                        </li>
-                                                    ))}
-                                            </ul>
-                                        ) : (
-                                            <p className="text-gray-500 text-xs ml-4">Chưa có từ vựng nào trong bài học này.</p>
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-
-                        {/* Removed Public Lessons section */}
+                <form onSubmit={handleBulkSubmit} className="space-y-4">
+                    <div>
+                        <label htmlFor="bulkText" className="block text-gray-700 text-sm font-semibold mb-2">
+                            Văn bản từ vựng:
+                        </label>
+                        <textarea
+                            id="bulkText"
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg h-40 resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            value={bulkText}
+                            onChange={(e) => setBulkText(e.target.value)}
+                            placeholder="Nhập từng cặp từ trên mỗi dòng, ví dụ: &#10;apple - quả táo&#10;banana : quả chuối"
+                            required
+                        ></textarea>
                     </div>
-                )}
-            </div>
-        </div>
-    );
-};
-
-// Component for Review Configuration and starting tests
-const ReviewSection = ({ db, auth, userId, showMessage, setCurrentView, currentView, firestoreAppNamespace }) => {
-    const [privateLessons, setPrivateLessons] = useState([]); // Only private lessons now
-    const [allFlashcards, setAllFlashcards] = useState([]);
-    const [selectedPrivateLessonIds, setSelectedPrivateLessonIds] = useState([]); // Only private lesson IDs now
-    // Removed selectedPublicLessonIds
-    const [numQuestions, setNumQuestions] = useState(10);
-    const [testDuration, setTestDuration] = useState(60); // in seconds, for test mode
-    const [testMode, setTestMode] = useState('flip-card'); // 'eng-vie', 'vie-eng', 'flip-card'
-    const [testFlashcards, setTestFlashcards] = useState([]); // Cards selected for the current test/flip session
-    const [lastTestFlashcards, setLastTestFlashcards] = useState([]); // Stores cards from the last full test for re-testing
-
-    // Fetch lessons and flashcards for review configuration
-    useEffect(() => {
-        if (!db || !userId || !firestoreAppNamespace) return;
-
-        // Listener for private lessons only
-        const privateLessonsQuery = query(collection(db, `artifacts/${firestoreAppNamespace}/users/${userId}/lessons`));
-        const unsubscribePrivateLessons = onSnapshot(privateLessonsQuery, (snapshot) => {
-            const lessonsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), type: 'private' }));
-            setPrivateLessons(lessonsData);
-        }, (error) => {
-            console.error("Error loading private lessons for review:", error);
-            showMessage('Không thể tải bài học cá nhân cho phần ôn tập.', 'error');
-        });
-
-        // Listener for private flashcards only
-        const privateFlashcardsQuery = query(collection(db, `artifacts/${firestoreAppNamespace}/users/${userId}/flashcards`));
-        const unsubscribePrivateFlashcards = onSnapshot(privateFlashcardsQuery, (snapshot) => {
-            const privateCards = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isPublic: false })); // isPublic is always false now
-            setAllFlashcards(privateCards); // No merging needed, as no public cards
-        }, (error) => {
-            console.error("Error loading private flashcards for review:", error);
-            showMessage('Không thể tải flashcard cá nhân cho phần ôn tập.', 'error');
-        });
-
-        return () => {
-            unsubscribePrivateLessons();
-            unsubscribePrivateFlashcards();
-        };
-    }, [db, userId, showMessage, firestoreAppNamespace]);
-
-    // Handle private lesson selection (multi-select)
-    const handlePrivateLessonSelection = (e) => {
-        const { value, checked } = e.target;
-        if (checked) {
-            setSelectedPrivateLessonIds(prev => [...prev, value]);
-        } else {
-            setSelectedPrivateLessonIds(prev => prev.filter(id => id !== value));
-        }
-    };
-
-    // Removed handlePublicLessonSelection
-
-
-    // Prepare and start the test/flip card session
-    const startReviewSession = (useLastTest = false) => {
-        let cardsToUse = [];
-
-        if (useLastTest && lastTestFlashcards.length > 0) {
-            cardsToUse = [...lastTestFlashcards].sort(() => 0.5 - Math.random()); // Reshuffle
-            showMessage('Đang làm lại bài kiểm tra cũ với thứ tự mới.', 'info');
-        } else {
-            // Filter cards from selected private lessons only
-            let filteredCards = allFlashcards.filter(card =>
-                selectedPrivateLessonIds.includes(card.lessonId)
-            );
-
-            if (filteredCards.length === 0) {
-                showMessage('Không có từ vựng nào trong các bài học đã chọn.', 'error');
-                return;
-            }
-
-            const shuffledCards = filteredCards.sort(() => 0.5 - Math.random());
-            cardsToUse = shuffledCards.slice(0, Math.min(numQuestions, shuffledCards.length));
-
-            if (cardsToUse.length === 0) {
-                showMessage('Không đủ từ vựng để tạo bài ôn tập/kiểm tra với số lượng yêu cầu.', 'error');
-                return;
-            }
-            setLastTestFlashcards(cardsToUse);
-            showMessage('Bắt đầu bài kiểm tra mới.', 'success');
-        }
-
-        setTestFlashcards(cardsToUse);
-        if (testMode === 'flip-card') {
-            setCurrentView('flipcard');
-        } else {
-            setCurrentView('test');
-        }
-    };
-
-    return (
-        <div className="p-6 rounded-lg shadow-inner bg-purple-50">
-            <h2 className="text-2xl font-semibold text-purple-700 mb-4">Cấu hình Ôn tập</h2>
-
-            <div className="mb-6">
-                <label className="block text-gray-700 text-sm font-bold mb-2">
-                    Chọn Bài học Cá nhân của bạn:
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-48 overflow-y-auto border border-purple-200 rounded-md p-3 bg-white">
-                    {privateLessons.length === 0 ? (
-                        <p className="text-gray-500 col-span-full">Chưa có bài học cá nhân nào.</p>
-                    ) : (
-                        privateLessons.map(lesson => (
-                            <label key={lesson.id} className="inline-flex items-center text-gray-700">
-                                <input
-                                    type="checkbox"
-                                    value={lesson.id}
-                                    checked={selectedPrivateLessonIds.includes(lesson.id)}
-                                    onChange={handlePrivateLessonSelection}
-                                    className="form-checkbox h-5 w-5 text-purple-600 rounded"
-                                />
-                                <span className="ml-2">{lesson.name}</span>
-                            </label>
-                        ))
-                    )}
-                </div>
-            </div>
-
-            {/* Removed Public Lessons selection */}
-
-            <div className="mb-6">
-                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="numQuestions">
-                    Số lượng câu hỏi / thẻ muốn ôn tập:
-                </label>
-                <input
-                    type="number"
-                    id="numQuestions"
-                    min="1"
-                    value={numQuestions}
-                    onChange={(e) => setNumQuestions(Math.max(1, parseInt(e.target.value) || 1))}
-                    className="w-full p-3 border border-purple-300 rounded-md focus:ring-2 focus:ring-purple-400 outline-none"
-                />
-            </div>
-
-            {testMode !== 'flip-card' && (
-                <div className="mb-6">
-                    <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="testDuration">
-                        Thời gian làm bài (giây):
-                    </label>
-                    <input
-                        type="number"
-                        id="testDuration"
-                        min="10"
-                        value={testDuration}
-                        onChange={(e) => setTestDuration(Math.max(10, parseInt(e.target.value) || 10))}
-                        className="w-full p-3 border border-purple-300 rounded-md focus:ring-2 focus:ring-purple-400 outline-none"
-                    />
-                </div>
-            )}
-
-            <div className="mb-6">
-                <label className="block text-gray-700 text-sm font-bold mb-2">
-                    Chế độ ôn tập:
-                </label>
-                <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-4">
-                    <label className="inline-flex items-center">
-                        <input
-                            type="radio"
-                            name="testMode"
-                            value="flip-card"
-                            checked={testMode === 'flip-card'}
-                            onChange={(e) => setTestMode(e.target.value)}
-                            className="form-radio h-5 w-5 text-purple-600"
-                        />
-                        <span className="ml-2 text-gray-700">Lật thẻ (Flashcard Mode: Anh &rarr; Việt)</span>
-                    </label>
-                    <label className="inline-flex items-center">
-                        <input
-                            type="radio"
-                            name="testMode"
-                            value="eng-vie"
-                            checked={testMode === 'eng-vie'}
-                            onChange={(e) => setTestMode(e.target.value)}
-                            className="form-radio h-5 w-5 text-purple-600"
-                        />
-                        <span className="ml-2 text-gray-700">Kiểm tra: Tiếng Anh &rarr; Tiếng Việt</span>
-                    </label>
-                    <label className="inline-flex items-center">
-                        <input
-                            type="radio"
-                            name="testMode"
-                            value="vie-eng"
-                            checked={testMode === 'vie-eng'}
-                            onChange={(e) => setTestMode(e.target.value)}
-                            className="form-radio h-5 w-5 text-purple-600"
-                        />
-                        <span className="ml-2 text-gray-700">Kiểm tra: Tiếng Việt &rarr; Tiếng Anh</span>
-                    </label>
-                </div>
-            </div>
-
-            <div className="flex flex-col space-y-3">
-                <button
-                    onClick={() => startReviewSession(false)}
-                    className="w-full px-6 py-3 bg-purple-600 text-white rounded-md font-semibold hover:bg-purple-700 transition-colors shadow-lg"
-                >
-                    Bắt đầu ôn tập (Bài mới)
-                </button>
-                {lastTestFlashcards.length > 0 && (
+                    <div>
+                        <label htmlFor="bulkImportTopic" className="block text-gray-700 text-sm font-semibold mb-2">
+                            Chọn chủ đề cho nhập hàng loạt:
+                        </label>
+                        <select
+                            id="bulkImportTopic"
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            value={bulkImportTopic}
+                            onChange={(e) => setBulkImportTopic(e.target.value)}
+                            required
+                        >
+                            <option value="">-- Chọn chủ đề --</option>
+                            {topics.map((topic) => (
+                                <option key={topic.id} value={topic.id}>
+                                    {topic.name}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
                     <button
-                        onClick={() => startReviewSession(true)}
-                        className="w-full px-6 py-3 bg-blue-600 text-white rounded-md font-semibold hover:bg-blue-700 transition-colors shadow-lg"
+                        type="submit"
+                        className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold text-lg hover:bg-green-700 transition-colors shadow-md"
                     >
-                        Làm lại bài kiểm tra cũ ({lastTestFlashcards.length} câu - Xáo trộn mới)
+                        Nhập hàng loạt
                     </button>
-                )}
+                    <p className="text-sm text-gray-500 mt-2">
+                        Lưu ý: Tính năng nhập từ hình ảnh (OCR) yêu cầu các dịch vụ backend chuyên biệt. Tại đây, bạn có thể dán văn bản đã được trích xuất từ hình ảnh.
+                    </p>
+                </form>
             </div>
-        </div>
+        </section>
     );
 };
 
-// Component for the actual Test/Quiz
-const Test = ({ flashcards, duration, mode, onTestEnd }) => {
+
+// --- Quiz Component ---
+const QuizComponent = ({ vocabulary, topics, db, userId, appId, setModal }) => {
+    const [quizSettings, setQuizSettings] = useState({
+        topicId: '',
+        direction: 'en-vi', // 'en-vi' or 'vi-en'
+        timeLimit: 0, // seconds, 0 for no limit
+        quizLength: 10,
+    });
+    const [currentQuiz, setCurrentQuiz] = useState([]); // Questions for the current quiz session
     const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+    const [userAnswer, setUserAnswer] = useState('');
+    const [quizStarted, setQuizStarted] = useState(false);
+    const [quizFinished, setQuizFinished] = useState(false);
     const [score, setScore] = useState(0);
-    const [timeLeft, setTimeLeft] = useState(duration);
-    const [answer, setAnswer] = useState('');
-    const [isCorrect, setIsCorrect] = useState(null); // null: no check, true: correct, false: incorrect
-    const [showResults, setShowResults] = useState(false);
-    const [hasCheated, setHasCheated] = useState(false);
-    const timerRef = useRef(null);
-    const answerInputRef = useRef(null);
+    const [timer, setTimer] = useState(0);
+    const [intervalId, setIntervalId] = useState(null);
+    const [showCorrectAnswer, setShowCorrectAnswer] = useState(false);
+    const [quizHistory, setQuizHistory] = useState([]); // To store previous quiz sessions
+    const [selectedHistoryQuizId, setSelectedHistoryQuizId] = useState('');
+    const [isReviewMode, setIsReviewMode] = useState(false);
 
-    // Anti-cheat: Detect tab/window visibility change
-    const handleVisibilityChange = useCallback(() => {
-        if (document.hidden) {
-            setHasCheated(true);
-            clearInterval(timerRef.current);
-            setShowResults(true); // End test immediately if cheating detected
+    // Fetch quiz history
+    useEffect(() => {
+        if (db && userId) {
+            const historyCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/quizHistory`);
+            const q = query(historyCollectionRef); // No orderBy to avoid index issues
+            const unsubscribe = onSnapshot(q, (snapshot) => {
+                const fetchedHistory = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                // Sort by date in memory
+                fetchedHistory.sort((a, b) => (b.timestamp?.toDate() || 0) - (a.timestamp?.toDate() || 0));
+                setQuizHistory(fetchedHistory);
+            }, (error) => {
+                console.error("Error fetching quiz history:", error);
+            });
+            return () => unsubscribe();
         }
-    }, []);
+    }, [db, userId, appId]);
 
+    // Timer effect
     useEffect(() => {
-        document.addEventListener('visibilitychange', handleVisibilityChange);
-        return () => {
-            document.removeEventListener('visibilitychange', handleVisibilityChange);
-        };
-    }, [handleVisibilityChange]);
-
-
-    // Start timer on test start
-    useEffect(() => {
-        if (!showResults && !hasCheated) {
-            timerRef.current = setInterval(() => {
-                setTimeLeft(prev => {
+        if (quizStarted && quizSettings.timeLimit > 0 && !quizFinished) {
+            setTimer(quizSettings.timeLimit);
+            const id = setInterval(() => {
+                setTimer((prev) => {
                     if (prev <= 1) {
-                        clearInterval(timerRef.current);
-                        setShowResults(true); // Time's up, show results
+                        clearInterval(id);
+                        handleNextQuestion(true); // Auto-submit if time runs out
                         return 0;
                     }
                     return prev - 1;
                 });
             }, 1000);
+            setIntervalId(id);
+            return () => clearInterval(id); // Cleanup on unmount or if quiz stops
+        } else if (!quizStarted || quizFinished) {
+            clearInterval(intervalId);
+        }
+    }, [quizStarted, currentQuestionIndex, quizFinished, quizSettings.timeLimit]);
+
+    // Shuffle array function
+    const shuffleArray = (array) => {
+        let shuffled = [...array];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        return shuffled;
+    };
+
+    // Prepare questions based on settings
+    const prepareQuestions = () => {
+        let filteredVocabulary = vocabulary;
+        if (quizSettings.topicId) {
+            filteredVocabulary = vocabulary.filter(voc => voc.topicId === quizSettings.topicId);
         }
 
-        // Cleanup on unmount or test end
-        return () => clearInterval(timerRef.current);
-    }, [showResults, hasCheated]);
-
-    // Focus input when question changes
-    useEffect(() => {
-        if (answerInputRef.current) {
-            answerInputRef.current.focus();
+        if (filteredVocabulary.length === 0) {
+            setModal({
+                show: true,
+                title: "Không có từ vựng",
+                message: "Không có từ vựng nào phù hợp với cài đặt của bạn. Vui lòng thêm từ hoặc chọn chủ đề khác.",
+                onClose: () => setModal({ ...setModal, show: false })
+            });
+            return [];
         }
-    }, [currentQuestionIndex]);
 
-    const currentCard = flashcards[currentQuestionIndex];
-    const questionText = mode === 'eng-vie' ? currentCard?.englishWord : currentCard?.vietnameseWord;
-    const correctAnswer = mode === 'eng-vie' ? currentCard?.vietnameseWord : currentCard?.englishWord;
+        let shuffledVocabulary = shuffleArray(filteredVocabulary);
+        // Ensure quizLength doesn't exceed available vocabulary
+        const actualQuizLength = Math.min(quizSettings.quizLength, shuffledVocabulary.length);
+        return shuffledVocabulary.slice(0, actualQuizLength).map(item => ({
+            ...item,
+            isCorrect: false, // Track if answer was correct
+            userAnswer: '', // Store user's answer
+            question: quizSettings.direction === 'en-vi' ? item.english : item.vietnamese,
+            correctAnswer: quizSettings.direction === 'en-vi' ? item.vietnamese : item.english
+        }));
+    };
 
-    const checkAnswer = () => {
-        if (!currentCard) return;
+    // Start a new quiz
+    const startQuiz = () => {
+        setIsReviewMode(false);
+        const questions = prepareQuestions();
+        if (questions.length > 0) {
+            setCurrentQuiz(questions);
+            setCurrentQuestionIndex(0);
+            setScore(0);
+            setUserAnswer('');
+            setShowCorrectAnswer(false);
+            setQuizFinished(false);
+            setQuizStarted(true);
+            if (quizSettings.timeLimit > 0) {
+                setTimer(quizSettings.timeLimit);
+            }
+        } else {
+            setQuizStarted(false);
+        }
+    };
 
-        const userAnswer = answer.trim().toLowerCase();
-        const correctFormattedAnswer = correctAnswer.trim().toLowerCase();
+    // Start a review quiz from history
+    const startReviewQuiz = () => {
+        const selectedQuiz = quizHistory.find(q => q.id === selectedHistoryQuizId);
+        if (selectedQuiz && selectedQuiz.questions) {
+            const reviewQuestions = shuffleArray(selectedQuiz.questions.map(q => ({
+                ...q,
+                isCorrect: false, // Reset correctness for review
+                userAnswer: '', // Reset user answer for review
+                question: quizSettings.direction === 'en-vi' ? q.english : q.vietnamese,
+                correctAnswer: quizSettings.direction === 'en-vi' ? q.vietnamese : q.english
+            })));
+            setCurrentQuiz(reviewQuestions);
+            setCurrentQuestionIndex(0);
+            setScore(0);
+            setUserAnswer('');
+            setShowCorrectAnswer(false);
+            setQuizFinished(false);
+            setQuizStarted(true);
+            setIsReviewMode(true);
+            if (quizSettings.timeLimit > 0) {
+                setTimer(quizSettings.timeLimit);
+            }
+        } else {
+            setModal({
+                show: true,
+                title: "Lỗi",
+                message: "Không tìm thấy bộ câu hỏi để ôn tập.",
+                onClose: () => setModal({ ...setModal, show: false })
+            });
+        }
+    };
 
-        if (userAnswer === correctFormattedAnswer) {
+    // Handle user submitting an answer or time running out
+    const handleNextQuestion = (fromTimer = false) => {
+        clearInterval(intervalId); // Stop current question's timer
+
+        const currentQuestion = currentQuiz[currentQuestionIndex];
+        const isAnswerCorrect = currentQuestion.correctAnswer.toLowerCase() === userAnswer.trim().toLowerCase();
+
+        // Update the current quiz state with user's answer and correctness
+        const updatedQuiz = currentQuiz.map((q, index) => {
+            if (index === currentQuestionIndex) {
+                return { ...q, userAnswer: fromTimer ? '' : userAnswer.trim(), isCorrect: isAnswerCorrect };
+            }
+            return q;
+        });
+        setCurrentQuiz(updatedQuiz);
+
+        if (isAnswerCorrect) {
             setScore(prev => prev + 1);
-            setIsCorrect(true);
-        } else {
-            setIsCorrect(false);
         }
-        // Move to next question after a short delay to show feedback
+
+        setShowCorrectAnswer(true); // Show the correct answer after submission
+
+        // Wait a bit before moving to the next question
         setTimeout(() => {
-            handleNextQuestion();
-        }, 1000);
+            if (currentQuestionIndex < currentQuiz.length - 1) {
+                setCurrentQuestionIndex(prev => prev + 1);
+                setUserAnswer('');
+                setShowCorrectAnswer(false);
+                if (quizSettings.timeLimit > 0) {
+                    setTimer(quizSettings.timeLimit); // Reset timer for next question
+                }
+            } else {
+                setQuizFinished(true);
+                setQuizStarted(false);
+                // Save quiz results to history if it's a new quiz (not a review)
+                if (!isReviewMode && currentQuiz.length > 0) {
+                    saveQuizHistory(updatedQuiz, score + (isAnswerCorrect ? 1 : 0)); // Final score after last question
+                }
+            }
+        }, 1500); // Show correct answer for 1.5 seconds
     };
 
-    const handleNextQuestion = () => {
-        setAnswer('');
-        setIsCorrect(null); // Reset feedback
-        if (currentQuestionIndex < flashcards.length - 1) {
-            setCurrentQuestionIndex(prev => prev + 1);
-        } else {
-            clearInterval(timerRef.current);
-            setShowResults(true); // End of questions, show results
+    // Save quiz history to Firestore
+    const saveQuizHistory = async (quizData, finalScore) => {
+        if (!db || !userId) return;
+
+        try {
+            await addDoc(collection(db, `artifacts/${appId}/users/${userId}/quizHistory`), {
+                timestamp: new Date(),
+                settings: quizSettings,
+                questions: quizData.map(q => ({ // Store relevant info for review
+                    english: q.english,
+                    vietnamese: q.vietnamese,
+                    topicId: q.topicId,
+                    question: q.question,
+                    correctAnswer: q.correctAnswer,
+                    wasCorrect: q.isCorrect, // Store correctness from this quiz session
+                    userAnswer: q.userAnswer,
+                })),
+                score: finalScore,
+                totalQuestions: quizData.length,
+            });
+            setModal({
+                show: true,
+                title: "Lịch sử kiểm tra",
+                message: "Kết quả kiểm tra đã được lưu vào lịch sử.",
+                onClose: () => setModal({ ...setModal, show: false })
+            });
+        } catch (e) {
+            console.error("Error saving quiz history: ", e);
+            setModal({
+                show: true,
+                title: "Lỗi",
+                message: "Không thể lưu lịch sử kiểm tra.",
+                onClose: () => setModal({ ...setModal, show: false })
+            });
         }
     };
 
-    const formatTime = (seconds) => {
-        const minutes = Math.floor(seconds / 60);
-        const remainingSeconds = seconds % 60;
-        return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+
+    const currentQuestion = currentQuiz[currentQuestionIndex];
+    const topicName = topics.find(t => t.id === quizSettings.topicId)?.name || 'Tất cả chủ đề';
+
+    if (!quizStarted && !quizFinished) {
+        return (
+            <section className="bg-white rounded-xl shadow-xl p-8 max-w-2xl mx-auto">
+                <h2 className="text-3xl font-bold text-blue-700 mb-6">Cài đặt kiểm tra</h2>
+                <div className="space-y-4 mb-6">
+                    <div>
+                        <label htmlFor="quizTopic" className="block text-gray-700 text-sm font-semibold mb-2">
+                            Chọn chủ đề:
+                        </label>
+                        <select
+                            id="quizTopic"
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            value={quizSettings.topicId}
+                            onChange={(e) => setQuizSettings({ ...quizSettings, topicId: e.target.value })}
+                        >
+                            <option value="">Tất cả chủ đề</option>
+                            {topics.map(topic => (
+                                <option key={topic.id} value={topic.id}>{topic.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label htmlFor="quizDirection" className="block text-gray-700 text-sm font-semibold mb-2">
+                            Hướng kiểm tra:
+                        </label>
+                        <select
+                            id="quizDirection"
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            value={quizSettings.direction}
+                            onChange={(e) => setQuizSettings({ ...quizSettings, direction: e.target.value })}
+                        >
+                            <option value="en-vi">Anh sang Việt</option>
+                            <option value="vi-en">Việt sang Anh</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label htmlFor="quizTimeLimit" className="block text-gray-700 text-sm font-semibold mb-2">
+                            Thời gian trả lời mỗi câu (giây, 0 = không giới hạn):
+                        </label>
+                        <input
+                            type="number"
+                            id="quizTimeLimit"
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            value={quizSettings.timeLimit}
+                            onChange={(e) => setQuizSettings({ ...quizSettings, timeLimit: Math.max(0, parseInt(e.target.value) || 0) })}
+                            min="0"
+                        />
+                    </div>
+                    <div>
+                        <label htmlFor="quizLength" className="block text-gray-700 text-sm font-semibold mb-2">
+                            Số lượng câu hỏi:
+                        </label>
+                        <input
+                            type="number"
+                            id="quizLength"
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            value={quizSettings.quizLength}
+                            onChange={(e) => setQuizSettings({ ...quizSettings, quizLength: Math.max(1, parseInt(e.target.value) || 1) })}
+                            min="1"
+                            max={vocabulary.length || 1}
+                        />
+                        <p className="text-sm text-gray-500 mt-1">
+                            (Tổng số từ có sẵn: {vocabulary.length})
+                        </p>
+                    </div>
+                </div>
+                <button
+                    onClick={startQuiz}
+                    className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold text-lg hover:bg-blue-700 transition-colors shadow-md"
+                >
+                    Bắt đầu kiểm tra mới
+                </button>
+
+                <div className="mt-8 pt-6 border-t border-gray-200">
+                    <h3 className="text-2xl font-bold text-blue-700 mb-4">Lịch sử kiểm tra</h3>
+                    {quizHistory.length === 0 ? (
+                        <p className="text-gray-600">Bạn chưa có lịch sử kiểm tra nào.</p>
+                    ) : (
+                        <div>
+                            <select
+                                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4"
+                                value={selectedHistoryQuizId}
+                                onChange={(e) => setSelectedHistoryQuizId(e.target.value)}
+                            >
+                                <option value="">-- Chọn bài kiểm tra để ôn tập --</option>
+                                {quizHistory.map(quiz => (
+                                    <option key={quiz.id} value={quiz.id}>
+                                        {new Date(quiz.timestamp?.toDate()).toLocaleString()} - {quiz.score}/{quiz.totalQuestions} ({topics.find(t => t.id === quiz.settings.topicId)?.name || 'Tổng hợp'})
+                                    </option>
+                                ))}
+                            </select>
+                            <button
+                                onClick={startReviewQuiz}
+                                disabled={!selectedHistoryQuizId}
+                                className={`w-full py-3 rounded-lg font-semibold text-lg transition-colors shadow-md
+                                    ${selectedHistoryQuizId ? 'bg-purple-600 text-white hover:bg-purple-700' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}
+                            >
+                                Bắt đầu ôn tập
+                            </button>
+                        </div>
+                    )}
+                </div>
+            </section>
+        );
+    }
+
+    if (quizFinished) {
+        return (
+            <section className="bg-white rounded-xl shadow-xl p-8 max-w-2xl mx-auto text-center">
+                <h2 className="text-3xl font-bold text-blue-700 mb-6">Kết quả kiểm tra!</h2>
+                <p className="text-xl text-gray-800 mb-4">
+                    Bạn đã trả lời đúng <span className="font-extrabold text-green-600">{score}</span> trên tổng số <span className="font-extrabold text-blue-600">{currentQuiz.length}</span> câu hỏi.
+                </p>
+                <div className="space-y-4 mb-6 text-left">
+                    <h3 className="text-2xl font-bold text-blue-700 mb-4">Chi tiết:</h3>
+                    {currentQuiz.map((q, index) => (
+                        <div key={index} className={`p-4 rounded-lg shadow-sm ${q.isCorrect ? 'bg-green-50' : 'bg-red-50'}`}>
+                            <p className="text-gray-800 font-semibold mb-1">
+                                Câu hỏi {index + 1}: <span className="font-bold text-lg text-blue-800">{q.question}</span>
+                            </p>
+                            <p className="text-gray-700 mb-1">
+                                Câu trả lời của bạn: <span className={`${q.isCorrect ? 'text-green-600' : 'text-red-600'} font-medium`}>
+                                    {q.userAnswer || (q.isCorrect ? '' : '(Không trả lời)')}
+                                </span>
+                            </p>
+                            {!q.isCorrect && (
+                                <p className="text-gray-700">
+                                    Đáp án đúng: <span className="text-green-700 font-medium">{q.correctAnswer}</span>
+                                </p>
+                            )}
+                        </div>
+                    ))}
+                </div>
+                <button
+                    onClick={() => {
+                        setQuizStarted(false);
+                        setQuizFinished(false);
+                        setCurrentQuiz([]);
+                        setSelectedHistoryQuizId(''); // Clear selection
+                        setIsReviewMode(false);
+                    }}
+                    className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold text-lg hover:bg-blue-700 transition-colors shadow-md"
+                >
+                    Kiểm tra lại
+                </button>
+            </section>
+        );
+    }
+
+    return (
+        <section className="bg-white rounded-xl shadow-xl p-8 max-w-2xl mx-auto text-center relative">
+            <h2 className="text-3xl font-bold text-blue-700 mb-4">Đang kiểm tra</h2>
+            <p className="text-lg text-gray-700 mb-2">
+                Chủ đề: <span className="font-semibold">{topicName}</span> | Hướng: <span className="font-semibold">{quizSettings.direction === 'en-vi' ? 'Anh → Việt' : 'Việt → Anh'}</span>
+            </p>
+            <p className="text-xl text-gray-800 mb-6">
+                Câu hỏi {currentQuestionIndex + 1} / {currentQuiz.length}
+                {quizSettings.timeLimit > 0 && (
+                    <span className="ml-4 text-red-600 font-bold">Thời gian: {timer}s</span>
+                )}
+            </p>
+
+            {currentQuestion && (
+                <>
+                    <div className="flashcard-container mb-8">
+                        <div className="flashcard-content bg-blue-100 p-8 rounded-lg shadow-lg">
+                            <p className="text-4xl font-extrabold text-blue-900 mb-4 break-words">
+                                {currentQuestion.question}
+                            </p>
+                            {showCorrectAnswer && (
+                                <p className="text-3xl font-semibold text-green-700 break-words mt-4 animate-fade-in-down">
+                                    {currentQuestion.correctAnswer}
+                                </p>
+                            )}
+                        </div>
+                    </div>
+
+                    <form onSubmit={(e) => { e.preventDefault(); handleNextQuestion(); }} className="space-y-4">
+                        <input
+                            type="text"
+                            className="w-full px-5 py-3 border-2 border-gray-300 rounded-lg text-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+                            placeholder="Nhập câu trả lời của bạn..."
+                            value={userAnswer}
+                            onChange={(e) => setUserAnswer(e.target.value)}
+                            disabled={showCorrectAnswer} // Disable input while correct answer is shown
+                            autoFocus
+                        />
+                        <button
+                            type="submit"
+                            className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold text-lg hover:bg-blue-700 transition-colors shadow-lg disabled:bg-gray-400 disabled:cursor-not-allowed"
+                            disabled={showCorrectAnswer} // Disable submit button while correct answer is shown
+                        >
+                            Kiểm tra & Kế tiếp
+                        </button>
+                    </form>
+                </>
+            )}
+        </section>
+    );
+};
+
+
+// --- Study Mode Component (Flashcard Display) ---
+const StudyModeComponent = ({ vocabulary, topics, setModal }) => {
+    const [filteredVocabulary, setFilteredVocabulary] = useState([]);
+    const [currentCardIndex, setCurrentCardIndex] = useState(0);
+    const [showVietnamese, setShowVietnamese] = useState(false);
+    const [selectedTopic, setSelectedTopic] = useState(''); // Stores topic ID
+
+    useEffect(() => {
+        // Filter vocabulary based on selected topic
+        let newFilteredVocab = vocabulary;
+        if (selectedTopic) {
+            newFilteredVocab = vocabulary.filter(voc => voc.topicId === selectedTopic);
+        }
+        setFilteredVocabulary(shuffleArray(newFilteredVocab)); // Shuffle on initial load or filter change
+        setCurrentCardIndex(0);
+        setShowVietnamese(false);
+    }, [vocabulary, selectedTopic]);
+
+    // Shuffle array function (re-defined or import from utility if needed)
+    const shuffleArray = (array) => {
+        let shuffled = [...array];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        return shuffled;
     };
 
-    if (showResults) {
+    const handleNextCard = () => {
+        if (currentCardIndex < filteredVocabulary.length - 1) {
+            setCurrentCardIndex(prev => prev + 1);
+        } else {
+            setModal({
+                show: true,
+                title: "Hoàn thành",
+                message: "Bạn đã xem hết tất cả các flashcard trong chủ đề này!",
+                onClose: () => setModal({ ...setModal, show: false })
+            });
+            setCurrentCardIndex(0); // Loop back to start or finish
+        }
+        setShowVietnamese(false);
+    };
+
+    const handlePreviousCard = () => {
+        if (currentCardIndex > 0) {
+            setCurrentCardIndex(prev => prev - 1);
+        } else {
+            setModal({
+                show: true,
+                title: "Thông báo",
+                message: "Bạn đang ở flashcard đầu tiên.",
+                onClose: () => setModal({ ...setModal, show: false })
+            });
+        }
+        setShowVietnamese(false);
+    };
+
+    const currentCard = filteredVocabulary[currentCardIndex];
+
+    if (filteredVocabulary.length === 0) {
         return (
-            <div className="flex flex-col items-center p-8 bg-blue-50 rounded-lg shadow-xl">
-                <h2 className="text-3xl font-bold text-blue-800 mb-6">Kết quả kiểm tra</h2>
-                {hasCheated ? (
-                    <p className="text-xl text-red-600 font-semibold mb-4 animate-pulse">
-                        ⚠️ Phát hiện gian lận! Bài kiểm tra đã bị dừng.
+            <section className="bg-white rounded-xl shadow-xl p-8 max-w-2xl mx-auto text-center">
+                <h2 className="text-3xl font-bold text-blue-700 mb-6">Học nhanh từ vựng</h2>
+                <p className="text-gray-700 mb-4">
+                    Không có từ vựng nào để hiển thị. Vui lòng thêm từ vựng hoặc chọn chủ đề khác.
+                </p>
+                <div>
+                    <label htmlFor="studyTopic" className="block text-gray-700 text-sm font-semibold mb-2">
+                        Chọn chủ đề:
+                    </label>
+                    <select
+                        id="studyTopic"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        value={selectedTopic}
+                        onChange={(e) => setSelectedTopic(e.target.value)}
+                    >
+                        <option value="">Tất cả chủ đề</option>
+                        {topics.map(topic => (
+                            <option key={topic.id} value={topic.id}>{topic.name}</option>
+                        ))}
+                    </select>
+                </div>
+            </section>
+        );
+    }
+
+    return (
+        <section className="bg-white rounded-xl shadow-xl p-8 max-w-2xl mx-auto text-center">
+            <h2 className="text-3xl font-bold text-blue-700 mb-6">Học nhanh từ vựng</h2>
+            <div className="mb-4">
+                <label htmlFor="studyTopic" className="block text-gray-700 text-sm font-semibold mb-2">
+                    Lọc theo chủ đề:
+                </label>
+                <select
+                    id="studyTopic"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    value={selectedTopic}
+                    onChange={(e) => setSelectedTopic(e.target.value)}
+                >
+                    <option value="">Tất cả chủ đề</option>
+                    {topics.map(topic => (
+                        <option key={topic.id} value={topic.id}>{topic.name}</option>
+                    ))}
+                </select>
+            </div>
+
+            <div
+                className="flashcard-content bg-gradient-to-br from-blue-500 to-blue-700 text-white p-10 rounded-xl shadow-xl cursor-pointer transform transition-transform duration-300 hover:scale-105 min-h-[200px] flex items-center justify-center relative overflow-hidden"
+                onClick={() => setShowVietnamese(!showVietnamese)}
+            >
+                <div className="absolute top-4 left-4 text-sm opacity-80">
+                    {currentCardIndex + 1} / {filteredVocabulary.length}
+                </div>
+                {!showVietnamese ? (
+                    <p className="text-5xl font-extrabold text-center drop-shadow-lg break-words max-w-full">
+                        {currentCard.english}
                     </p>
                 ) : (
-                    <p className="text-2xl text-green-700 font-semibold mb-4">
-                        Bạn đã đúng {score} / {flashcards.length} câu.
+                    <p className="text-4xl font-semibold text-center drop-shadow-lg animate-fade-in-up break-words max-w-full">
+                        {currentCard.vietnamese}
                     </p>
                 )}
+            </div>
+
+            <div className="flex justify-center space-x-4 mt-8">
                 <button
-                    onClick={onTestEnd}
-                    className="px-8 py-4 bg-blue-600 text-white rounded-full font-semibold text-lg hover:bg-blue-700 transition-colors shadow-lg"
+                    onClick={handlePreviousCard}
+                    className="flex items-center bg-gray-200 text-gray-800 px-6 py-3 rounded-lg font-semibold hover:bg-gray-300 transition-colors shadow-md"
                 >
-                    Quay lại trang Ôn tập
-                </button>
-            </div>
-        );
-    }
-
-    if (!currentCard) {
-        return (
-            <div className="text-center text-gray-600 text-xl">
-                Không có flashcard nào được tải cho bài kiểm tra này.
-            </div>
-        );
-    }
-
-    return (
-        <div className="flex flex-col items-center p-8 bg-gradient-to-br from-blue-100 to-purple-100 rounded-lg shadow-xl relative min-h-[400px]">
-            <div className="absolute top-4 right-4 bg-white text-blue-700 px-4 py-2 rounded-full font-semibold text-lg shadow-md">
-                Thời gian: {formatTime(timeLeft)}
-            </div>
-            <div className="absolute top-4 left-4 bg-white text-green-700 px-4 py-2 rounded-full font-semibold text-lg shadow-md">
-                Điểm: {score} / {flashcards.length}
-            </div>
-
-            <p className="text-gray-600 mb-2 mt-12 text-center text-sm">
-                Câu hỏi {currentQuestionIndex + 1} / {flashcards.length}
-            </p>
-            <div className="flashcard-display bg-white p-10 rounded-xl shadow-lg w-full max-w-lg text-center min-h-[180px] flex items-center justify-center mb-8 transform hover:scale-105 transition-transform duration-300">
-                <p className="text-4xl font-bold text-blue-900 break-words max-w-full">
-                    {questionText}
-                </p>
-            </div>
-
-            <input
-                ref={answerInputRef}
-                type="text"
-                placeholder="Nhập câu trả lời của bạn..."
-                value={answer}
-                onChange={(e) => setAnswer(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && checkAnswer()}
-                className="w-full max-w-md p-4 text-center border-2 border-blue-300 rounded-full text-xl focus:ring-4 focus:ring-blue-500 outline-none transition-all duration-200"
-            />
-
-            {isCorrect !== null && (
-                <div className={`mt-4 px-6 py-2 rounded-full font-semibold text-white shadow-md ${isCorrect ? 'bg-green-500' : 'bg-red-500'}`}>
-                    {isCorrect ? 'Chính xác!' : `Sai rồi! Đáp án: ${correctAnswer}`}
-                </div>
-            )}
-
-            <div className="mt-8 flex space-x-4">
-                <button
-                    onClick={checkAnswer}
-                    className="px-8 py-4 bg-blue-600 text-white rounded-full font-semibold text-lg hover:bg-blue-700 transition-colors shadow-lg transform hover:scale-105"
-                >
-                    Kiểm tra
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-arrow-left mr-2"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
+                    Trước
                 </button>
                 <button
-                    onClick={handleNextQuestion}
-                    className="px-8 py-4 bg-gray-300 text-gray-800 rounded-full font-semibold text-lg hover:bg-gray-400 transition-colors shadow-lg transform hover:scale-105"
+                    onClick={handleNextCard}
+                    className="flex items-center bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors shadow-md"
                 >
-                    Bỏ qua &rarr;
+                    Tiếp theo
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-arrow-right ml-2"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
                 </button>
             </div>
-        </div>
+        </section>
     );
 };
 
-// Component for Flip Card Mode
-const FlipCardMode = ({ flashcards, onEnd }) => {
-    const [currentIndex, setCurrentIndex] = useState(0);
-    const [isFlipped, setIsFlipped] = useState(false);
+// --- App Wrapper with Firebase Provider ---
+const WrappedApp = () => (
+    <FirebaseProvider>
+        <App />
+    </FirebaseProvider>
+);
 
-    // Reset flip state when card changes
-    useEffect(() => {
-        setIsFlipped(false);
-    }, [currentIndex]);
-
-    const currentCard = flashcards[currentIndex];
-
-    if (!currentCard) {
-        return (
-            <div className="flex flex-col items-center p-8 bg-blue-50 rounded-lg shadow-xl">
-                <h2 className="text-2xl font-bold text-blue-800 mb-4">Kết thúc phiên lật thẻ</h2>
-                <p className="text-xl text-gray-700 mb-6">Bạn đã xem hết {flashcards.length} thẻ.</p>
-                <button
-                    onClick={onEnd}
-                    className="px-8 py-4 bg-blue-600 text-white rounded-full font-semibold text-lg hover:bg-blue-700 transition-colors shadow-lg"
-                >
-                    Quay lại trang Ôn tập
-                </button>
-            </div>
-        );
-    }
-
-    // Hardcode front to English and back to Vietnamese for Flip Card Mode
-    const frontText = currentCard.englishWord;
-    const backText = currentCard.vietnameseWord;
-
-    const handleFlip = () => {
-        setIsFlipped(prev => !prev);
-    };
-
-    const handleNext = () => {
-        if (currentIndex < flashcards.length - 1) {
-            setCurrentIndex(prev => prev + 1);
-        } else {
-            onEnd(); // End session if it's the last card
-        }
-    };
-
-    const handlePrev = () => {
-        if (currentIndex > 0) {
-            setCurrentIndex(prev => prev - 1);
-        }
-    };
-
-    return (
-        <div className="flex flex-col items-center p-8 bg-gradient-to-br from-indigo-100 to-teal-100 rounded-lg shadow-xl relative min-h-[400px]">
-            <p className="text-gray-600 mb-6 text-center text-lg">
-                Thẻ {currentIndex + 1} / {flashcards.length}
-            </p>
-
-            <div className="flip-card w-full max-w-md h-64 perspective-1000 mb-8">
-                <div
-                    className={`flip-card-inner relative w-full h-full text-center transition-transform duration-700 rounded-xl shadow-lg cursor-pointer ${isFlipped ? 'rotated' : ''}`}
-                    onClick={handleFlip}
-                >
-                    <div className="flip-card-front absolute w-full h-full backface-hidden bg-white flex items-center justify-center p-6 rounded-xl border-4 border-indigo-300">
-                        <p className="text-3xl font-bold text-indigo-800 break-words max-w-full">
-                            {frontText}
-                        </p>
-                    </div>
-                    <div className="flip-card-back absolute w-full h-full backface-hidden bg-white flex items-center justify-center p-6 rounded-xl border-4 border-teal-300 transform rotate-y-180">
-                        <p className="text-3xl font-bold text-teal-800 break-words max-w-full">
-                            {backText}
-                        </p>
-                    </div>
-                </div>
-            </div>
-
-            <div className="flex space-x-4 mt-4">
-                <button
-                    onClick={handlePrev}
-                    disabled={currentIndex === 0}
-                    className={`px-6 py-3 rounded-full font-semibold text-lg transition-colors shadow-lg transform hover:scale-105 ${
-                        currentIndex === 0 ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'
-                    }`}
-                >
-                    &larr; Thẻ trước
-                </button>
-                <button
-                    onClick={handleNext}
-                    className="px-6 py-3 bg-teal-600 text-white rounded-full font-semibold text-lg hover:bg-teal-700 transition-colors shadow-lg transform hover:scale-105"
-                >
-                    Thẻ tiếp theo &rarr;
-                </button>
-            </div>
-
-            {/* CSS for flip card animation */}
-            <style>{`
-                .perspective-1000 {
-                    perspective: 1000px;
-                }
-                .flip-card-inner {
-                    transform-style: preserve-3d;
-                }
-                .flip-card-inner.rotated {
-                    transform: rotateY(180deg);
-                }
-                .flip-card-front, .flip-card-back {
-                    -webkit-backface-visibility: hidden; /* Safari */
-                    backface-visibility: hidden;
-                }
-                .flip-card-back {
-                    transform: rotateY(180deg);
-                }
-            `}</style>
-        </div>
-    );
-};
-
-export default App;
+export default WrappedApp;
