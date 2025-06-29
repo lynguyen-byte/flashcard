@@ -3,22 +3,15 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, addDoc, doc, deleteDoc, onSnapshot, query, where } from 'firebase/firestore';
 
-// Define Firebase config from Vercel Environment Variables
-// Vercel environment variables are exposed to the browser if prefixed with REACT_APP_ (for Create React App based builds)
-// or NEXT_PUBLIC_ (for Next.js based builds). Assuming a standard React build, REACT_APP_ is used.
-const firebaseConfig = {
-  apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
-  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.REACT_APP_FIREBASE_APP_ID
-};
+// Define Firebase config and app ID from global variables provided by Canvas environment
+// These variables are available directly in the Canvas runtime, unlike process.env on Vercel.
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-// Use a distinct ID for Firestore collection paths when deploying to Vercel
-// This value should be set as REACT_APP_FIRESTORE_APP_NAMESPACE in Vercel environment variables,
-// ideally to your Firebase Project ID to ensure uniqueness across deployments.
-const firestoreAppNamespace = process.env.REACT_APP_FIRESTORE_APP_NAMESPACE || 'default-vercel-app';
+// The firestoreAppNamespace should be consistent with the Firebase rules.
+// In Canvas, it often maps to __app_id.
+const firestoreAppNamespace = appId;
 
 
 // Main App Component
@@ -36,10 +29,10 @@ const App = () => {
     useEffect(() => {
         const initFirebase = async () => {
             try {
-                // Check if Firebase config is loaded
-                if (!firebaseConfig.apiKey) {
-                    console.error("Firebase configuration is missing. Please check Vercel environment variables.");
-                    setMessage('Lỗi cấu hình Firebase. Vui lòng kiểm tra biến môi trường.');
+                // Check if Firebase config is loaded. For Canvas, this should always be provided.
+                if (!firebaseConfig || Object.keys(firebaseConfig).length === 0) {
+                    console.error("Firebase configuration is missing. Please ensure Canvas environment provides it.");
+                    setMessage('Lỗi cấu hình Firebase. Vui lòng kiểm tra môi trường Canvas.');
                     setMessageType('error');
                     setLoading(false);
                     return;
@@ -52,16 +45,19 @@ const App = () => {
                 setAuth(authInstance);
                 setDb(dbInstance);
 
-                // For Vercel deployment, __initial_auth_token is not available.
-                // We'll sign in anonymously or you can implement other Firebase auth methods here.
-                await signInAnonymously(authInstance);
-
+                // Use __initial_auth_token if available (for authenticated Canvas sessions), otherwise sign in anonymously.
+                if (initialAuthToken) {
+                    await signInWithCustomToken(authInstance, initialAuthToken);
+                } else {
+                    await signInAnonymously(authInstance);
+                }
 
                 const unsubscribe = onAuthStateChanged(authInstance, (user) => {
                     if (user) {
                         setUserId(user.uid);
                     } else {
-                        setUserId(crypto.randomUUID()); // Anonymous ID
+                        // If no authenticated user, use a random ID for anonymous operations
+                        setUserId(crypto.randomUUID());
                     }
                     setLoading(false);
                 });
@@ -76,7 +72,7 @@ const App = () => {
         };
 
         initFirebase();
-    }, []);
+    }, []); // Empty dependency array means this effect runs once on mount
 
     // Function to show transient messages
     const showMessage = useCallback((msg, type) => {
@@ -87,7 +83,7 @@ const App = () => {
             setMessageType('');
         }, 3000);
         return () => clearTimeout(timer);
-    }, []);
+    }, []); // useCallback memoizes the function
 
     if (loading) {
         return (
