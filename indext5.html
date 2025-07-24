@@ -1,0 +1,1674 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vocab Builder - Cập nhật</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #1a202c; /* gray-900 */
+            color: #e2e8f0; /* gray-200 */
+        }
+        /* Custom scrollbar for better look */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #2d3748; /* gray-800 */
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #4a5568; /* gray-600 */
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #718096; /* gray-500 */
+        }
+        .tab-active {
+            background-color: #2f855a; /* green-700 */
+            color: white;
+        }
+        .calendar-day.no-activity { background-color: #4b5563; } /* gray-600 */
+        .calendar-day.activity-low { background-color: #48bb78; } /* green-500 */
+        .calendar-day.activity-medium { background-color: #38a169; } /* green-600 */
+        .calendar-day.activity-high { background-color: #2f855a; } /* green-700 */
+        .calendar-day.activity-very-high { background-color: #276749; } /* green-800 */
+
+        /* Flashcard specific styles */
+        .card-container {
+            width: 100%;
+            height: 300px; /* Fixed height for consistency */
+            perspective: 1000px;
+            cursor: pointer;
+        }
+        .card-inner {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            text-align: center;
+            transition: transform 0.6s;
+            transform-style: preserve-3d;
+            border-radius: 0.75rem; /* rounded-lg */
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); /* shadow-md */
+        }
+        .card-container.is-flipped .card-inner {
+            transform: rotateY(180deg);
+        }
+        .card-face {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            -webkit-backface-visibility: hidden; /* Safari */
+            backface-visibility: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+            border-radius: 0.75rem; /* rounded-lg */
+            font-size: 1.5rem; /* text-2xl */
+            font-weight: 600; /* font-semibold */
+            text-align: center;
+        }
+        .card-front {
+            background-color: #2d3748; /* gray-800 */
+            color: #e2e8f0; /* gray-200 */
+        }
+        .card-back {
+            background-color: #4a5568; /* gray-600 */
+            color: #e2e8f0; /* gray-200 */
+            transform: rotateY(180deg);
+        }
+
+        /* Modal styles */
+        .modal {
+            display: none; /* Hidden by default */
+            position: fixed; /* Stay in place */
+            z-index: 1000; /* Sit on top */
+            left: 0;
+            top: 0;
+            width: 100%; /* Full width */
+            height: 100%; /* Full height */
+            overflow: auto; /* Enable scroll if needed */
+            background-color: rgba(0,0,0,0.4); /* Black w/ opacity */
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background-color: #2d3748; /* gray-800 */
+            margin: auto;
+            padding: 20px;
+            border: 1px solid #4a5568; /* gray-600 */
+            width: 80%; /* Could be more responsive */
+            max-width: 500px;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        .close-button {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+        }
+        .close-button:hover,
+        .close-button:focus {
+            color: #e2e8f0;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        /* Quiz specific styles */
+        .quiz-feedback {
+            padding: 1rem;
+            border-radius: 0.5rem;
+            margin-top: 1rem;
+            font-weight: bold;
+            text-align: center;
+        }
+        .quiz-feedback.correct {
+            background-color: #2f855a; /* green-700 */
+            color: white;
+        }
+        .quiz-feedback.incorrect {
+            background-color: #c53030; /* red-700 */
+            color: white;
+        }
+        .quiz-result-item {
+            padding: 0.75rem;
+            margin-bottom: 0.5rem;
+            border-radius: 0.5rem;
+        }
+        .quiz-result-item.correct {
+            background-color: #2f855a40; /* green-700 with transparency */
+            border: 1px solid #2f855a;
+        }
+        .quiz-result-item.incorrect {
+            background-color: #c5303040; /* red-700 with transparency */
+            border: 1px solid #c53030;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+    <div id="app-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-button">&times;</span>
+            <p id="modal-message" class="text-lg text-gray-200 mb-4"></p>
+            <div id="modal-actions" class="flex justify-end space-x-2">
+                </div>
+        </div>
+    </div>
+
+    <div id="cheating-modal" class="modal">
+        <div class="modal-content text-center">
+            <p class="text-xl font-bold text-yellow-400 mb-4" id="cheating-modal-title">Bài dò sẽ bắt đầu lại!</p>
+            <p class="text-lg text-gray-200 mb-4" id="cheating-modal-message">Bạn đã chuyển ra khỏi tab hoặc thu nhỏ cửa sổ. Vui lòng quay lại để bắt đầu lại bài dò.</p>
+        </div>
+    </div>
+
+    <div class="container mx-auto p-4 flex-grow">
+        <h1 class="text-3xl font-bold text-center mb-6 text-green-400">Vocab Builder</h1>
+        <p id="user-id-display" class="text-sm text-gray-400 text-center mb-4">Lưu trữ cục bộ trên trình duyệt này</p>
+
+        <nav class="flex justify-center mb-6">
+            <button id="vocab-tab" class="px-6 py-3 rounded-l-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors duration-200">
+                <i class="fas fa-book mr-2"></i>Từ vựng
+            </button>
+            <button id="flashcard-tab" class="px-6 py-3 bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors duration-200">
+                <i class="fas fa-clone mr-2"></i>Flashcard
+            </button>
+            <button id="quiz-tab" class="px-6 py-3 bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors duration-200">
+                <i class="fas fa-question-circle mr-2"></i>Dò tự luận
+            </button>
+            <button id="stats-tab" class="px-6 py-3 rounded-r-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors duration-200">
+                <i class="fas fa-chart-line mr-2"></i>Thống kê
+            </button>
+        </nav>
+
+        <div id="vocab-view" class="view hidden bg-gray-800 p-6 rounded-lg shadow-lg">
+            <h2 class="text-2xl font-semibold mb-4 text-green-300">Quản lý Từ vựng</h2>
+
+            <div class="mb-4">
+                <label for="topic-select" class="block text-gray-300 text-sm font-bold mb-2">Chọn Chủ đề:</label>
+                <div class="flex items-center space-x-2">
+                    <select id="topic-select" class="flex-grow p-2 rounded-lg bg-gray-700 text-gray-200 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-green-500">
+                        </select>
+                    <button id="add-topic-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition-colors duration-200 flex items-center">
+                        <i class="fas fa-plus mr-1"></i>Thêm
+                    </button>
+                    <button id="edit-topic-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition-colors duration-200 flex items-center">
+                        <i class="fas fa-edit mr-1"></i>Sửa
+                    </button>
+                    <button id="delete-topic-btn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition-colors duration-200 flex items-center">
+                        <i class="fas fa-trash-alt mr-1"></i>Xóa
+                    </button>
+                </div>
+            </div>
+
+            <div class="mb-6 border-b border-gray-700 pb-4">
+                <h3 class="text-xl font-semibold mb-3 text-green-300">Thêm Từ mới</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label for="new-term" class="block text-gray-300 text-sm font-bold mb-2">Từ (tiếng Anh):</label>
+                        <input type="text" id="new-term" class="w-full p-2 rounded-lg bg-gray-700 text-gray-200 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-green-500" placeholder="Ví dụ: Hello">
+                    </div>
+                    <div>
+                        <label for="new-synonyms" class="block text-gray-300 text-sm font-bold mb-2">Từ đồng nghĩa (cách nhau bởi dấu phẩy):</label>
+                        <input type="text" id="new-synonyms" class="w-full p-2 rounded-lg bg-gray-700 text-gray-200 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-green-500" placeholder="Ví dụ: Hi, Greetings">
+                    </div>
+                    <div class="md:col-span-2">
+                        <label for="new-meaning" class="block text-gray-300 text-sm font-bold mb-2">Nghĩa (tiếng Việt):</label>
+                        <textarea id="new-meaning" class="w-full p-2 rounded-lg bg-gray-700 text-gray-200 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-green-500" rows="2" placeholder="Ví dụ: Xin chào"></textarea>
+                    </div>
+                </div>
+                <button id="add-word-btn" class="mt-4 bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition-colors duration-200 w-full md:w-auto">
+                    <i class="fas fa-plus mr-2"></i>Thêm Từ
+                </button>
+            </div>
+
+            <div class="mb-6 border-b border-gray-700 pb-4">
+                <h3 class="text-xl font-semibold mb-3 text-green-300">Thêm hàng loạt</h3>
+                <p class="text-sm text-gray-400 mb-2">Nhập mỗi từ trên một dòng. Định dạng: <code class="bg-gray-700 p-1 rounded">tiếng anh:tiếng việt</code> hoặc <code class="bg-gray-700 p-1 rounded">tiếng anh1, tiếng anh 2: tiếng việt</code></p>
+                <textarea id="bulk-add-textarea" class="w-full p-2 rounded-lg bg-gray-700 text-gray-200 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-green-500" rows="8" placeholder="Ví dụ:&#10;apple:quả táo&#10;banana, fruit:quả chuối, trái cây&#10;hello, hi:xin chào"></textarea>
+                <button id="bulk-add-btn" class="mt-4 bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition-colors duration-200 w-full md:w-auto">
+                    <i class="fas fa-upload mr-2"></i>Thêm hàng loạt
+                </button>
+            </div>
+
+            <div>
+                <h3 class="text-xl font-semibold mb-3 text-green-300">Danh sách Từ vựng</h3>
+                <div id="word-list" class="space-y-3 max-h-96 overflow-y-auto">
+                    <p id="no-words-message" class="text-gray-400 text-center hidden">Chưa có từ nào trong chủ đề này.</p>
+                </div>
+            </div>
+        </div>
+
+        <div id="flashcard-view" class="view hidden bg-gray-800 p-6 rounded-lg shadow-lg flex flex-col items-center justify-center">
+            <h2 class="text-2xl font-semibold mb-4 text-green-300">Học Flashcard</h2>
+
+            <div class="mb-4 w-full max-w-md">
+                <label class="block text-gray-300 text-sm font-bold mb-2">Chế độ ôn tập (Chọn Chủ đề):</label>
+                <div id="flashcard-topic-checkboxes" class="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto p-2 rounded-lg bg-gray-700 border border-gray-600">
+                    <!-- Checkboxes will be rendered here by JavaScript -->
+                </div>
+            </div>
+
+            <p id="flashcard-status" class="text-gray-400 mb-4">Đang tải flashcard...</p>
+
+            <div id="card-container" class="card-container bg-gray-700 rounded-lg shadow-lg relative w-full max-w-md mb-6">
+                <div class="card-inner">
+                    <div class="card-face card-front" id="card-front-content">
+                        <span id="current-term"></span>
+                    </div>
+                    <div class="card-face card-back" id="card-back-content">
+                        <span id="current-meaning"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="card-controls" class="flex flex-wrap justify-center gap-4 w-full max-w-md">
+                </div>
+            
+            <button id="flashcard-next-btn" class="mt-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition-colors duration-200 flex items-center">
+                <i class="fas fa-arrow-right mr-2"></i>Tiếp theo
+            </button>
+
+            <button id="review-again-btn" class="mt-6 bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg transition-colors duration-200 flex items-center">
+                <i class="fas fa-redo-alt mr-2"></i>Ôn lại
+            </button>
+        </div>
+
+        <div id="quiz-view" class="view hidden bg-gray-800 p-6 rounded-lg shadow-lg flex flex-col items-center justify-center">
+            <h2 class="text-2xl font-semibold mb-4 text-green-300">Dò tự luận</h2>
+
+            <div class="mb-4 w-full max-w-md space-y-3">
+                <div>
+                    <label class="block text-gray-300 text-sm font-bold mb-2">Chọn Chủ đề:</label>
+                    <div id="quiz-topic-checkboxes" class="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto p-2 rounded-lg bg-gray-700 border border-gray-600">
+                        <!-- Checkboxes will be rendered here by JavaScript -->
+                    </div>
+                </div>
+                <div>
+                    <label for="quiz-question-count" class="block text-gray-300 text-sm font-bold mb-2">Số câu hỏi:</label>
+                    <input type="number" id="quiz-question-count" class="w-full p-2 rounded-lg bg-gray-700 text-gray-200 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-green-500" value="10" min="1">
+                </div>
+                <div>
+                    <label for="quiz-time-limit" class="block text-gray-300 text-sm font-bold mb-2">Giới hạn thời gian mỗi câu (giây):</label>
+                    <input type="number" id="quiz-time-limit" class="w-full p-2 rounded-lg bg-gray-700 text-gray-200 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-green-500" value="15" min="5">
+                </div>
+                <button id="start-quiz-btn" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition-colors duration-200 flex items-center justify-center">
+                    <i class="fas fa-play mr-2"></i>Bắt đầu Dò
+                </button>
+            </div>
+
+            <div id="quiz-display-area" class="hidden w-full bg-gray-700 p-6 rounded-lg shadow-lg flex flex-col items-center">
+                <p id="quiz-timer-display" class="text-xl font-bold text-yellow-400 mb-4"></p>
+                <p id="quiz-meaning-display" class="text-3xl font-semibold text-green-200 mb-6 text-center"></p>
+                <input type="text" id="quiz-answer-input" class="w-full p-3 rounded-lg bg-gray-800 text-gray-200 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-green-500 text-center text-xl" placeholder="Nhập từ tiếng Anh...">
+                
+                <div id="quiz-feedback-area" class="quiz-feedback w-full hidden"></div>
+
+                <div class="flex justify-center space-x-4 mt-6 w-full">
+                    <button id="submit-answer-btn" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition-colors duration-200 flex items-center justify-center">
+                        <i class="fas fa-paper-plane mr-2"></i>Kiểm tra
+                    </button>
+                    <button id="next-question-btn" class="flex-1 bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg transition-colors duration-200 flex items-center justify-center hidden">
+                        <i class="fas fa-arrow-right mr-2"></i>Tiếp theo
+                    </button>
+                </div>
+                <p id="quiz-progress-display" class="text-gray-400 mt-4"></p>
+            </div>
+
+            <div id="quiz-results-area" class="hidden w-full bg-gray-700 p-6 rounded-lg shadow-lg flex flex-col items-center text-center">
+                <h3 class="text-2xl font-semibold text-green-300 mb-4">Kết quả Dò tự luận</h3>
+                <p id="final-score-display" class="text-3xl font-bold text-green-400 mb-6"></p>
+                <div id="detailed-quiz-results" class="w-full text-left max-h-60 overflow-y-auto pr-2">
+                    <!-- Detailed results will be rendered here -->
+                </div>
+                <button id="restart-quiz-btn" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition-colors duration-200 flex items-center justify-center mt-6">
+                    <i class="fas fa-redo-alt mr-2"></i>Dò lại
+                </button>
+            </div>
+        </div>
+
+        <div id="stats-view" class="view hidden bg-gray-800 p-6 rounded-lg shadow-lg">
+            <h2 class="text-2xl font-semibold mb-4 text-green-300">Thống kê Học tập</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <div class="bg-gray-700 p-4 rounded-lg shadow">
+                    <p class="text-gray-400 text-sm">Tổng số từ:</p>
+                    <p id="total-words-stats" class="text-xl font-bold text-green-400">0</p>
+                </div>
+                <div class="bg-gray-700 p-4 rounded-lg shadow">
+                    <p class="text-gray-400 text-sm">Từ cần ôn tập:</p>
+                    <p id="due-words-stats" class="text-xl font-bold text-yellow-400">0</p>
+                </div>
+                <div class="bg-gray-700 p-4 rounded-lg shadow">
+                    <p class="text-gray-400 text-sm">Tổng thời gian học:</p>
+                    <p id="total-study-time" class="text-xl font-bold text-purple-400">0 phút</p>
+                </div>
+                <div class="bg-gray-700 p-4 rounded-lg shadow">
+                    <p class="text-gray-400 text-sm">Chuỗi ngày học liên tiếp:</p>
+                    <p id="streak-stats" class="text-xl font-bold text-orange-400">0 ngày</p>
+                </div>
+            </div>
+
+            <div class="mb-6">
+                <h3 class="text-xl font-semibold mb-3 text-green-300">Lịch Hoạt động Học tập</h3>
+                <div class="flex items-center justify-between mb-4">
+                    <button id="prev-month-btn" class="bg-gray-700 hover:bg-gray-600 text-gray-200 font-bold py-2 px-4 rounded-lg transition-colors duration-200">
+                        <i class="fas fa-arrow-left"></i>
+                    </button>
+                    <span id="current-month-year" class="text-xl font-semibold text-green-200"></span>
+                    <button id="next-month-btn" class="bg-gray-700 hover:bg-gray-600 text-gray-200 font-bold py-2 px-4 rounded-lg transition-colors duration-200">
+                        <i class="fas fa-arrow-right"></i>
+                    </button>
+                </div>
+                <div id="calendar-grid" class="grid grid-cols-7 gap-1 text-center text-sm">
+                    <div class="font-bold text-gray-400">CN</div>
+                    <div class="font-bold text-gray-400">T2</div>
+                    <div class="font-bold text-gray-400">T3</div>
+                    <div class="font-bold text-gray-400">T4</div>
+                    <div class="font-bold text-gray-400">T5</div>
+                    <div class="font-bold text-gray-400">T6</div>
+                    <div class="font-bold text-gray-400">T7</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="bg-gray-900 text-gray-500 text-center p-4 text-sm mt-auto">
+        &copy; 2023 Vocab Builder. All rights reserved.
+    </footer>
+
+    <script>
+        // --- GLOBAL STATE ---
+        const appState = {
+            currentView: 'vocab',
+            topics: [], // Array of { id: string, name: string }
+            words: [],  // Array of { id: string, term: string, synonyms: string[], meaning: string, topicId: string, lastReviewed: string, nextReview: string, interval: number, repetitions: number, easeFactor: number }
+            stats: {
+                totalWords: 0,
+                dueWords: 0,
+                totalStudyTime: 0, // in minutes
+                streak: 0,
+                lastStudyDate: null,
+                dailyActivity: {} // { 'YYYY-MM-DD': count }
+            },
+            selectedTopicId: 'allTopics', // For vocab view (single select)
+            selectedFlashcardTopicIds: ['allTopics'], // For flashcard view (multi-select)
+            selectedQuizTopicIds: ['allTopics'], // For quiz view (multi-select)
+            flashcards: [],
+            currentFlashcardIndex: 0,
+            quiz: {
+                questions: [],
+                currentQuizIndex: 0,
+                score: 0, // Correct answers
+                incorrectScore: 0, // Incorrect answers
+                results: [], // Stores results of each question for detailed display
+                timer: null,
+                timeLeft: 0,
+                questionCount: 10,
+                timeLimit: 15, // seconds
+                isAnswered: false // New state to track if current quiz question is answered
+            },
+            currentCalendarDate: new Date(),
+            modal: {
+                message: '',
+                actions: [] // Array of { text: string, callback: function, style: string }
+            },
+            isQuizActive: false // Track if a quiz is currently active
+        };
+
+        // --- DOM ELEMENTS ---
+        const vocabTab = document.getElementById('vocab-tab');
+        const flashcardTab = document.getElementById('flashcard-tab');
+        const quizTab = document.getElementById('quiz-tab');
+        const statsTab = document.getElementById('stats-tab');
+
+        const vocabView = document.getElementById('vocab-view');
+        const flashcardView = document.getElementById('flashcard-view');
+        const quizView = document.getElementById('quiz-view');
+        const statsView = document.getElementById('stats-view');
+
+        const topicSelect = document.getElementById('topic-select');
+        const addTopicBtn = document.getElementById('add-topic-btn');
+        const editTopicBtn = document.getElementById('edit-topic-btn');
+        const deleteTopicBtn = document.getElementById('delete-topic-btn');
+
+        const newTermInput = document.getElementById('new-term');
+        const newSynonymsInput = document.getElementById('new-synonyms');
+        const newMeaningInput = document.getElementById('new-meaning');
+        const addWordBtn = document.getElementById('add-word-btn');
+
+        const bulkAddTextarea = document.getElementById('bulk-add-textarea');
+        const bulkAddBtn = document.getElementById('bulk-add-btn');
+
+        const wordListContainer = document.getElementById('word-list');
+        const noWordsMessage = document.getElementById('no-words-message');
+
+        // Changed from select to div for checkboxes
+        const flashcardTopicCheckboxes = document.getElementById('flashcard-topic-checkboxes');
+        const flashcardStatus = document.getElementById('flashcard-status');
+        const cardContainer = document.getElementById('card-container');
+        const cardFrontContent = document.getElementById('card-front-content');
+        const cardBackContent = document.getElementById('card-back-content');
+        const cardControls = document.getElementById('card-controls');
+        const flashcardNextBtn = document.getElementById('flashcard-next-btn');
+        const reviewAgainBtn = document.getElementById('review-again-btn');
+
+        // Changed from select to div for checkboxes
+        const quizTopicCheckboxes = document.getElementById('quiz-topic-checkboxes');
+        const quizQuestionCountInput = document.getElementById('quiz-question-count');
+        const quizTimeLimitInput = document.getElementById('quiz-time-limit');
+        const startQuizBtn = document.getElementById('start-quiz-btn');
+        const quizDisplayArea = document.getElementById('quiz-display-area');
+        const quizTimerDisplay = document.getElementById('quiz-timer-display');
+        const quizMeaningDisplay = document.getElementById('quiz-meaning-display');
+        const quizAnswerInput = document.getElementById('quiz-answer-input');
+        const submitAnswerBtn = document.getElementById('submit-answer-btn');
+        const nextQuestionBtn = document.getElementById('next-question-btn');
+        const quizFeedbackArea = document.getElementById('quiz-feedback-area');
+        const quizProgressDisplay = document.getElementById('quiz-progress-display');
+        const quizResultsArea = document.getElementById('quiz-results-area');
+        const finalScoreDisplay = document.getElementById('final-score-display');
+        const detailedQuizResults = document.getElementById('detailed-quiz-results');
+        const restartQuizBtn = document.getElementById('restart-quiz-btn');
+
+        const totalWordsStats = document.getElementById('total-words-stats');
+        const dueWordsStats = document.getElementById('due-words-stats');
+        const totalStudyTimeStats = document.getElementById('total-study-time');
+        const streakStats = document.getElementById('streak-stats');
+        const prevMonthBtn = document.getElementById('prev-month-btn');
+        const nextMonthBtn = document.getElementById('next-month-btn');
+        const currentMonthYear = document.getElementById('current-month-year');
+        const calendarGrid = document.getElementById('calendar-grid');
+
+        const appModal = document.getElementById('app-modal');
+        const modalMessage = document.getElementById('modal-message');
+        const modalActions = document.getElementById('modal-actions');
+        const closeModalBtn = appModal.querySelector('.close-button');
+
+        const cheatingModal = document.getElementById('cheating-modal');
+        const cheatingModalTitle = document.getElementById('cheating-modal-title');
+        const cheatingModalMessage = document.getElementById('cheating-modal-message');
+
+        // --- UTILITY FUNCTIONS ---
+
+        // Function to show a custom modal instead of alert/confirm
+        const showModal = (message, actions = []) => {
+            modalMessage.textContent = message;
+            modalActions.innerHTML = ''; // Clear previous actions
+
+            if (actions.length === 0) {
+                // Default OK button if no actions are provided
+                const okButton = document.createElement('button');
+                okButton.textContent = 'OK';
+                okButton.className = 'bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition-colors duration-200';
+                okButton.onclick = () => appModal.style.display = 'none';
+                modalActions.appendChild(okButton);
+            } else {
+                actions.forEach(action => {
+                    const button = document.createElement('button');
+                    button.textContent = action.text;
+                    button.className = action.style || 'bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition-colors duration-200';
+                    button.onclick = () => {
+                        action.callback();
+                        appModal.style.display = 'none';
+                    };
+                    modalActions.appendChild(button);
+                });
+            }
+            appModal.style.display = 'flex'; // Show the modal
+        };
+
+        closeModalBtn.addEventListener('click', () => {
+            appModal.style.display = 'none';
+        });
+
+        // Close modal if clicked outside
+        window.addEventListener('click', (event) => {
+            if (event.target === appModal) {
+                appModal.style.display = 'none';
+            }
+        });
+
+        // Generate a unique ID
+        const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2);
+
+        // Save data to localStorage
+        const saveDataToLocalStorage = () => {
+            try {
+                localStorage.setItem('vocabBuilderData', JSON.stringify({
+                    topics: appState.topics,
+                    words: appState.words,
+                    stats: appState.stats
+                }));
+                console.log('Data saved to localStorage.');
+            } catch (e) {
+                console.error('Error saving data to localStorage:', e);
+                showModal('Lỗi khi lưu dữ liệu vào bộ nhớ cục bộ. Vui lòng kiểm tra dung lượng trình duyệt.');
+            }
+        };
+
+        // Load data from localStorage
+        const loadDataFromLocalStorage = () => {
+            try {
+                const data = localStorage.getItem('vocabBuilderData');
+                if (data) {
+                    const parsedData = JSON.parse(data);
+                    appState.topics = parsedData.topics || [];
+                    appState.words = parsedData.words || [];
+                    appState.stats = parsedData.stats || {
+                        totalWords: 0,
+                        dueWords: 0,
+                        totalStudyTime: 0,
+                        streak: 0,
+                        lastStudyDate: null,
+                        dailyActivity: {}
+                    };
+                    // Ensure multi-select states are initialized correctly if not present in loaded data
+                    if (!parsedData.selectedFlashcardTopicIds) {
+                        appState.selectedFlashcardTopicIds = ['allTopics'];
+                    } else {
+                        appState.selectedFlashcardTopicIds = parsedData.selectedFlashcardTopicIds;
+                    }
+                    if (!parsedData.selectedQuizTopicIds) {
+                        appState.selectedQuizTopicIds = ['allTopics'];
+                    } else {
+                        appState.selectedQuizTopicIds = parsedData.selectedQuizTopicIds;
+                    }
+
+                    console.log('Data loaded from localStorage.');
+                } else {
+                    console.log('No data found in localStorage. Initializing with default data.');
+                    // Initialize with a default topic if no data exists
+                    if (appState.topics.length === 0) {
+                        appState.topics.push({ id: generateId(), name: 'Chung' });
+                        appState.selectedTopicId = appState.topics[0].id;
+                    }
+                }
+            } catch (e) {
+                console.error('Error loading data from localStorage:', e);
+                showModal('Lỗi khi tải dữ liệu từ bộ nhớ cục bộ. Dữ liệu có thể bị hỏng.');
+                // Reset to default if data is corrupted
+                appState.topics = [{ id: generateId(), name: 'Chung' }];
+                appState.words = [];
+                appState.stats = {
+                    totalWords: 0,
+                    dueWords: 0,
+                    totalStudyTime: 0,
+                    streak: 0,
+                    lastStudyDate: null,
+                    dailyActivity: {}
+                };
+                appState.selectedTopicId = appState.topics[0].id;
+                appState.selectedFlashcardTopicIds = ['allTopics'];
+                appState.selectedQuizTopicIds = ['allTopics'];
+            }
+        };
+
+        // Update daily activity for stats
+        const updateDailyActivity = () => {
+            const today = new Date().toISOString().slice(0, 10);
+            appState.stats.dailyActivity[today] = (appState.stats.dailyActivity[today] || 0) + 1;
+            saveDataToLocalStorage();
+        };
+
+        // Update streak
+        const updateStreak = () => {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const yesterday = new Date(today);
+            yesterday.setDate(today.getDate() - 1);
+
+            const lastStudyDate = appState.stats.lastStudyDate ? new Date(appState.stats.lastStudyDate) : null;
+
+            if (!lastStudyDate) {
+                appState.stats.streak = 1;
+            } else {
+                lastStudyDate.setHours(0, 0, 0, 0);
+                if (today.getTime() === lastStudyDate.getTime()) {
+                    // Already studied today, streak remains
+                } else if (yesterday.getTime() === lastStudyDate.getTime()) {
+                    appState.stats.streak++;
+                } else {
+                    appState.stats.streak = 1; // Streak broken
+                }
+            }
+            appState.stats.lastStudyDate = today.toISOString().slice(0, 10);
+            saveDataToLocalStorage();
+        };
+
+        // --- UI RENDERING FUNCTIONS ---
+
+        // Switch between different views (tabs)
+        const switchView = (viewId) => {
+            document.querySelectorAll('.view').forEach(view => {
+                view.classList.add('hidden');
+            });
+            document.getElementById(`${viewId}-view`).classList.remove('hidden');
+
+            document.querySelectorAll('nav button').forEach(button => {
+                button.classList.remove('tab-active');
+            });
+            document.getElementById(`${viewId}-tab`).classList.add('tab-active');
+            appState.currentView = viewId;
+
+            // Specific actions for each view
+            if (viewId === 'vocab') {
+                renderWordList();
+            } else if (viewId === 'flashcard') {
+                prepareFlashcards();
+            } else if (viewId === 'quiz') {
+                quizDisplayArea.classList.add('hidden');
+                quizResultsArea.classList.add('hidden');
+                startQuizBtn.classList.remove('hidden');
+                appState.isQuizActive = false; // Ensure quiz is not active when leaving tab
+                clearInterval(appState.quiz.timer); // Clear any running timer
+                cheatingModal.style.display = 'none'; // Hide cheating modal if visible
+            } else if (viewId === 'stats') {
+                renderCalendar();
+            }
+            updateStats(); // Always update stats when switching views
+        };
+
+        // Render topic select dropdown for Vocab tab
+        const renderVocabTopicSelect = () => {
+            topicSelect.innerHTML = ''; // Clear existing options
+
+            appState.topics.forEach(topic => {
+                const option = document.createElement('option');
+                option.value = topic.id;
+                option.textContent = topic.name;
+                topicSelect.appendChild(option);
+            });
+            topicSelect.value = appState.selectedTopicId;
+        };
+
+        // Render checkboxes for Flashcard and Quiz tabs
+        const renderMultiTopicCheckboxes = (containerElement, selectedIdsArray, stateKey) => {
+            containerElement.innerHTML = ''; // Clear existing checkboxes
+
+            // "All Topics" checkbox
+            const allTopicsDiv = document.createElement('div');
+            allTopicsDiv.className = 'flex items-center';
+            const allTopicsInput = document.createElement('input');
+            allTopicsInput.type = 'checkbox';
+            allTopicsInput.id = `${stateKey}-allTopics`;
+            allTopicsInput.value = 'allTopics';
+            allTopicsInput.className = 'form-checkbox h-4 w-4 text-green-600 transition duration-150 ease-in-out';
+            allTopicsInput.checked = selectedIdsArray.includes('allTopics');
+            allTopicsDiv.appendChild(allTopicsInput);
+            const allTopicsLabel = document.createElement('label');
+            allTopicsLabel.htmlFor = `${stateKey}-allTopics`;
+            allTopicsLabel.className = 'ml-2 text-gray-200 cursor-pointer';
+            allTopicsLabel.textContent = 'Tất cả chủ đề';
+            allTopicsDiv.appendChild(allTopicsLabel);
+            containerElement.appendChild(allTopicsDiv);
+
+            appState.topics.forEach(topic => {
+                const div = document.createElement('div');
+                div.className = 'flex items-center';
+                const input = document.createElement('input');
+                input.type = 'checkbox';
+                input.id = `${stateKey}-${topic.id}`;
+                input.value = topic.id;
+                input.className = 'form-checkbox h-4 w-4 text-green-600 transition duration-150 ease-in-out';
+                input.checked = selectedIdsArray.includes(topic.id);
+                div.appendChild(input);
+                const label = document.createElement('label');
+                label.htmlFor = `${stateKey}-${topic.id}`;
+                label.className = 'ml-2 text-gray-200 cursor-pointer';
+                label.textContent = topic.name;
+                div.appendChild(label);
+                containerElement.appendChild(div);
+            });
+
+            // Add event listeners for the checkboxes
+            containerElement.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+                checkbox.addEventListener('change', (e) => {
+                    const value = e.target.value;
+                    let currentSelected = appState[stateKey];
+
+                    if (value === 'allTopics') {
+                        if (e.target.checked) {
+                            appState[stateKey] = ['allTopics'];
+                            // Uncheck all other topic checkboxes
+                            containerElement.querySelectorAll('input[type="checkbox"]:not([value="allTopics"])').forEach(otherCheckbox => {
+                                otherCheckbox.checked = false;
+                            });
+                        } else {
+                            // If "All Topics" is unchecked, and no other topics are selected, default to 'allTopics'
+                            if (currentSelected.length === 1 && currentSelected[0] === 'allTopics') {
+                                appState[stateKey] = []; // Clear selection if 'allTopics' was the only one
+                            }
+                        }
+                    } else {
+                        // If an individual topic is checked, uncheck "All Topics"
+                        const allTopicsCheckbox = containerElement.querySelector(`input[value="allTopics"]`);
+                        if (e.target.checked && allTopicsCheckbox && allTopicsCheckbox.checked) {
+                            allTopicsCheckbox.checked = false;
+                            currentSelected = currentSelected.filter(id => id !== 'allTopics');
+                        }
+
+                        if (e.target.checked) {
+                            if (!currentSelected.includes(value)) {
+                                currentSelected.push(value);
+                            }
+                        } else {
+                            currentSelected = currentSelected.filter(id => id !== value);
+                        }
+                        appState[stateKey] = currentSelected;
+
+                        // If all individual topics are unchecked, re-check "All Topics"
+                        const anyOtherChecked = Array.from(containerElement.querySelectorAll('input[type="checkbox"]:not([value="allTopics"])')).some(cb => cb.checked);
+                        if (!anyOtherChecked && !appState[stateKey].includes('allTopics')) {
+                            allTopicsCheckbox.checked = true;
+                            appState[stateKey] = ['allTopics'];
+                        }
+                    }
+                    saveDataToLocalStorage(); // Save updated selected topics
+                    // Re-render to ensure visual consistency
+                    renderMultiTopicCheckboxes(containerElement, appState[stateKey], stateKey);
+                });
+            });
+        };
+
+
+        const renderFlashcardTopicCheckboxes = () => {
+            renderMultiTopicCheckboxes(flashcardTopicCheckboxes, appState.selectedFlashcardTopicIds, 'selectedFlashcardTopicIds');
+        };
+
+        const renderQuizTopicCheckboxes = () => {
+            renderMultiTopicCheckboxes(quizTopicCheckboxes, appState.selectedQuizTopicIds, 'selectedQuizTopicIds');
+        };
+
+
+        // Render the list of words for the selected topic
+        const renderWordList = () => {
+            wordListContainer.innerHTML = ''; // Clear existing list
+            const wordsToDisplay = appState.selectedTopicId === 'allTopics'
+                ? appState.words
+                : appState.words.filter(word => word.topicId === appState.selectedTopicId);
+
+            if (wordsToDisplay.length === 0) {
+                noWordsMessage.classList.remove('hidden');
+                return;
+            } else {
+                noWordsMessage.classList.add('hidden');
+            }
+
+            wordsToDisplay.forEach(word => {
+                const wordItem = document.createElement('div');
+                wordItem.className = 'bg-gray-700 p-4 rounded-lg shadow flex justify-between items-center';
+                wordItem.innerHTML = `
+                    <div>
+                        <p class="text-xl font-semibold text-green-200">${word.term} <span class="text-gray-400 text-sm">(${word.synonyms.join(', ')})</span></p>
+                        <p class="text-gray-300 text-sm">${word.meaning}</p>
+                        <p class="text-gray-500 text-xs mt-1">Chủ đề: ${appState.topics.find(t => t.id === word.topicId)?.name || 'Không xác định'}</p>
+                    </div>
+                    <div>
+                        <button data-id="${word.id}" class="edit-word-btn bg-blue-600 hover:bg-blue-700 text-white p-2 rounded-full text-sm mr-2">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button data-id="${word.id}" class="delete-word-btn bg-red-600 hover:bg-red-700 text-white p-2 rounded-full text-sm">
+                            <i class="fas fa-trash-alt"></i>
+                        </button>
+                    </div>
+                `;
+                wordListContainer.appendChild(wordItem);
+            });
+
+            // Add event listeners for edit and delete buttons
+            document.querySelectorAll('.edit-word-btn').forEach(button => {
+                button.addEventListener('click', (e) => editWord(e.currentTarget.dataset.id));
+            });
+            document.querySelectorAll('.delete-word-btn').forEach(button => {
+                button.addEventListener('click', (e) => deleteWord(e.currentTarget.dataset.id));
+            });
+        };
+
+        // Render flashcard content
+        const renderFlashcard = () => {
+            if (appState.flashcards.length === 0) {
+                flashcardStatus.textContent = 'Không có flashcard nào để ôn tập trong chủ đề này.';
+                cardContainer.classList.add('hidden');
+                cardControls.classList.add('hidden');
+                flashcardNextBtn.classList.add('hidden'); // Hide next button if no cards
+                reviewAgainBtn.classList.remove('hidden'); // Still show review again button to start new session
+                return;
+            }
+
+            flashcardStatus.textContent = `Flashcard: ${appState.currentFlashcardIndex + 1}/${appState.flashcards.length}`;
+            cardContainer.classList.remove('hidden');
+            cardControls.classList.remove('hidden');
+            flashcardNextBtn.classList.remove('hidden'); // Show next button if cards exist
+            reviewAgainBtn.classList.remove('hidden');
+
+            const currentCard = appState.flashcards[appState.currentFlashcardIndex];
+            cardFrontContent.textContent = currentCard.term;
+            cardBackContent.textContent = currentCard.meaning;
+            cardContainer.classList.remove('is-flipped'); // Ensure card is not flipped initially
+        };
+
+        // Setup flashcard rating buttons (Spaced Repetition System)
+        const setupCardControls = () => {
+            // Simplified to 3 ratings: Khá (3), Tốt (4), Dễ (5)
+            cardControls.innerHTML = `
+                <button data-rating="3" class="bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2 px-4 rounded-lg transition-colors duration-200 flex items-center">
+                    <i class="fas fa-smile mr-2"></i>Khá
+                </button>
+                <button data-rating="4" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition-colors duration-200 flex items-center">
+                    <i class="fas fa-grin-beam mr-2"></i>Tốt
+                </button>
+                <button data-rating="5" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition-colors duration-200 flex items-center">
+                    <i class="fas fa-star mr-2"></i>Dễ
+                </button>
+            `;
+            document.querySelectorAll('#card-controls button').forEach(button => {
+                button.addEventListener('click', (e) => rateFlashcard(parseInt(e.currentTarget.dataset.rating)));
+            });
+        };
+
+        // Render calendar for stats view
+        const renderCalendar = () => {
+            calendarGrid.innerHTML = `
+                <div class="font-bold text-gray-400">CN</div>
+                <div class="font-bold text-gray-400">T2</div>
+                <div class="font-bold text-gray-400">T3</div>
+                <div class="font-bold text-gray-400">T4</div>
+                <div class="font-bold text-gray-400">T5</div>
+                <div class="font-bold text-gray-400">T6</div>
+                <div class="font-bold text-gray-400">T7</div>
+            `; // Reset grid, keep headers
+
+            const today = new Date();
+            const currentMonth = appState.currentCalendarDate.getMonth();
+            const currentYear = appState.currentCalendarDate.getFullYear();
+
+            currentMonthYear.textContent = `${appState.currentCalendarDate.toLocaleString('vi-VN', { month: 'long', year: 'numeric' })}`;
+
+            const firstDayOfMonth = new Date(currentYear, currentMonth, 1);
+            const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+            const startDay = firstDayOfMonth.getDay(); // 0 for Sunday, 1 for Monday...
+
+            // Fill leading empty days
+            for (let i = 0; i < startDay; i++) {
+                const emptyDay = document.createElement('div');
+                emptyDay.className = 'p-2';
+                calendarGrid.appendChild(emptyDay);
+            }
+
+            // Fill days of the month
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dateString = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const activityCount = appState.stats.dailyActivity[dateString] || 0;
+
+                const dayElement = document.createElement('div');
+                dayElement.className = `calendar-day p-2 rounded-md flex items-center justify-center font-semibold`;
+                dayElement.textContent = day;
+
+                if (activityCount === 0) {
+                    dayElement.classList.add('no-activity');
+                } else if (activityCount < 3) {
+                    dayElement.classList.add('activity-low');
+                } else if (activityCount < 7) {
+                    dayElement.classList.add('activity-medium');
+                } else if (activityCount < 15) {
+                    dayElement.classList.add('activity-high');
+                } else {
+                    dayElement.classList.add('activity-very-high');
+                }
+
+                // Highlight today
+                if (day === today.getDate() && currentMonth === today.getMonth() && currentYear === today.getFullYear()) {
+                    dayElement.classList.add('border-2', 'border-blue-400');
+                }
+
+                calendarGrid.appendChild(dayElement);
+            }
+        };
+
+        // Update statistics display
+        const updateStats = () => {
+            appState.stats.totalWords = appState.words.length;
+            appState.stats.dueWords = appState.words.filter(word => new Date(word.nextReview) <= new Date()).length;
+
+            totalWordsStats.textContent = appState.stats.totalWords;
+            dueWordsStats.textContent = appState.stats.dueWords;
+            totalStudyTimeStats.textContent = `${appState.stats.totalStudyTime} phút`;
+            streakStats.textContent = `${appState.stats.streak} ngày`;
+        };
+
+        // --- EVENT HANDLERS ---
+
+        // Tab switching
+        vocabTab.addEventListener('click', () => switchView('vocab'));
+        flashcardTab.addEventListener('click', () => switchView('flashcard'));
+        quizTab.addEventListener('click', () => switchView('quiz'));
+        statsTab.addEventListener('click', () => switchView('stats'));
+
+        // Topic management (for single select in Vocab tab)
+        topicSelect.addEventListener('change', (e) => {
+            appState.selectedTopicId = e.target.value;
+            renderWordList();
+        });
+
+        addTopicBtn.addEventListener('click', () => {
+            showModal('Nhập tên chủ đề mới:', [
+                {
+                    text: 'Thêm',
+                    callback: () => {
+                        const newTopicName = document.getElementById('modal-input').value.trim();
+                        if (newTopicName) {
+                            if (appState.topics.some(t => t.name.toLowerCase() === newTopicName.toLowerCase())) {
+                                showModal('Chủ đề đã tồn tại.');
+                                return;
+                            }
+                            const newTopic = { id: generateId(), name: newTopicName };
+                            appState.topics.push(newTopic);
+                            appState.selectedTopicId = newTopic.id; // Select new topic
+                            saveDataToLocalStorage();
+                            renderVocabTopicSelect(); // Update vocab select
+                            renderFlashcardTopicCheckboxes(); // Update flashcard checkboxes
+                            renderQuizTopicCheckboxes(); // Update quiz checkboxes
+                            renderWordList();
+                            showModal(`Đã thêm chủ đề "${newTopicName}".`);
+                        } else {
+                            showModal('Tên chủ đề không được để trống.');
+                        }
+                    },
+                    style: 'bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg'
+                },
+                {
+                    text: 'Hủy',
+                    callback: () => {},
+                    style: 'bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg'
+                }
+            ]);
+            // Dynamically add an input field to the modal
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.id = 'modal-input';
+            input.className = 'w-full p-2 rounded-lg bg-gray-700 text-gray-200 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-green-500 mb-4';
+            input.placeholder = 'Tên chủ đề';
+            modalMessage.after(input);
+            input.focus();
+        });
+
+        editTopicBtn.addEventListener('click', () => {
+            const currentTopic = appState.topics.find(t => t.id === appState.selectedTopicId);
+            if (!currentTopic) {
+                showModal('Vui lòng chọn một chủ đề để sửa.');
+                return;
+            }
+
+            showModal(`Sửa tên chủ đề "${currentTopic.name}":`, [
+                {
+                    text: 'Lưu',
+                    callback: () => {
+                        const newTopicName = document.getElementById('modal-input').value.trim();
+                        if (newTopicName && newTopicName !== currentTopic.name) {
+                            if (appState.topics.some(t => t.name.toLowerCase() === newTopicName.toLowerCase() && t.id !== currentTopic.id)) {
+                                showModal('Chủ đề đã tồn tại.');
+                                return;
+                            }
+                            currentTopic.name = newTopicName;
+                            saveDataToLocalStorage();
+                            renderVocabTopicSelect();
+                            renderFlashcardTopicCheckboxes();
+                            renderQuizTopicCheckboxes();
+                            renderWordList();
+                            showModal(`Đã cập nhật chủ đề thành "${newTopicName}".`);
+                        } else if (newTopicName === currentTopic.name) {
+                            showModal('Không có thay đổi nào được thực hiện.');
+                        } else {
+                            showModal('Tên chủ đề không được để trống.');
+                        }
+                    },
+                    style: 'bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg'
+                },
+                {
+                    text: 'Hủy',
+                    callback: () => {},
+                    style: 'bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg'
+                }
+            ]);
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.id = 'modal-input';
+            input.className = 'w-full p-2 rounded-lg bg-gray-700 text-gray-200 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-green-500 mb-4';
+            input.value = currentTopic.name;
+            modalMessage.after(input);
+            input.focus();
+        });
+
+        deleteTopicBtn.addEventListener('click', () => {
+            const currentTopic = appState.topics.find(t => t.id === appState.selectedTopicId);
+            if (!currentTopic || appState.topics.length === 1) {
+                showModal('Không thể xóa chủ đề cuối cùng hoặc không có chủ đề nào được chọn.');
+                return;
+            }
+
+            showModal(`Bạn có chắc chắn muốn xóa chủ đề "${currentTopic.name}" và tất cả từ vựng trong đó?`, [
+                {
+                    text: 'Xóa',
+                    callback: () => {
+                        appState.words = appState.words.filter(word => word.topicId !== currentTopic.id);
+                        appState.topics = appState.topics.filter(topic => topic.id !== currentTopic.id);
+                        appState.selectedTopicId = appState.topics[0].id; // Select the first topic
+                        // Adjust selected multi-topic arrays if deleted topic was selected
+                        appState.selectedFlashcardTopicIds = appState.selectedFlashcardTopicIds.filter(id => id !== currentTopic.id);
+                        appState.selectedQuizTopicIds = appState.selectedQuizTopicIds.filter(id => id !== currentTopic.id);
+                        if (appState.selectedFlashcardTopicIds.length === 0) appState.selectedFlashcardTopicIds = ['allTopics'];
+                        if (appState.selectedQuizTopicIds.length === 0) appState.selectedQuizTopicIds = ['allTopics'];
+
+                        saveDataToLocalStorage();
+                        renderVocabTopicSelect();
+                        renderFlashcardTopicCheckboxes();
+                        renderQuizTopicCheckboxes();
+                        renderWordList();
+                        updateStats();
+                        showModal(`Đã xóa chủ đề "${currentTopic.name}".`);
+                    },
+                    style: 'bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg'
+                },
+                {
+                    text: 'Hủy',
+                    callback: () => {},
+                    style: 'bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg'
+                }
+            ]);
+        });
+
+        // Add single word
+        addWordBtn.addEventListener('click', () => {
+            const term = newTermInput.value.trim();
+            const synonyms = newSynonymsInput.value.trim().split(',').map(s => s.trim()).filter(s => s !== '');
+            const meaning = newMeaningInput.value.trim();
+            const topicId = appState.selectedTopicId;
+
+            if (!term || !meaning) {
+                showModal('Từ và Nghĩa không được để trống.');
+                return;
+            }
+
+            // Check for duplicate word in the same topic
+            if (appState.words.some(word => word.topicId === topicId && word.term.toLowerCase() === term.toLowerCase())) {
+                showModal(`Từ "${term}" đã tồn tại trong chủ đề này.`);
+                return;
+            }
+
+            const newWord = {
+                id: generateId(),
+                term,
+                synonyms,
+                meaning,
+                topicId,
+                lastReviewed: null,
+                nextReview: new Date().toISOString().slice(0, 10), // Set next review to today for new words
+                interval: 0,
+                repetitions: 0,
+                easeFactor: 2.5
+            };
+            appState.words.push(newWord);
+            saveDataToLocalStorage();
+            renderWordList();
+            updateStats();
+            newTermInput.value = '';
+            newSynonymsInput.value = '';
+            newMeaningInput.value = '';
+            // Removed showModal(`Đã thêm từ "${term}".`);
+        });
+
+        // Add bulk words
+        bulkAddBtn.addEventListener('click', () => {
+            const text = bulkAddTextarea.value.trim();
+            if (!text) {
+                showModal('Vui lòng nhập từ để thêm hàng loạt.');
+                return;
+            }
+
+            const lines = text.split('\n').filter(line => line.trim() !== '');
+            let addedCount = 0;
+            let skippedCount = 0;
+
+            lines.forEach(line => {
+                const parts = line.split(':');
+                if (parts.length < 2) {
+                    console.warn(`Skipping malformed line: ${line}`);
+                    skippedCount++;
+                    return;
+                }
+                const termPart = parts[0].trim();
+                const meaning = parts.slice(1).join(':').trim(); // Join back if meaning contains colons
+
+                const terms = termPart.split(',').map(s => s.trim()).filter(s => s !== '');
+                const term = terms[0]; // Main term is the first one
+                const synonyms = terms.slice(1); // Remaining are synonyms
+
+                if (!term || !meaning) {
+                    console.warn(`Skipping incomplete line: ${line}`);
+                    skippedCount++;
+                    return;
+                }
+
+                const topicId = appState.selectedTopicId;
+
+                // Check for duplicate word in the same topic
+                if (appState.words.some(word => word.topicId === topicId && word.term.toLowerCase() === term.toLowerCase())) {
+                    console.warn(`Skipping duplicate word in topic: ${term}`);
+                    skippedCount++;
+                    return;
+                }
+
+                const newWord = {
+                    id: generateId(),
+                    term,
+                    synonyms,
+                    meaning,
+                    topicId,
+                    lastReviewed: null,
+                    nextReview: new Date().toISOString().slice(0, 10),
+                    interval: 0,
+                    repetitions: 0,
+                    easeFactor: 2.5
+                };
+                appState.words.push(newWord);
+                addedCount++;
+            });
+
+            saveDataToLocalStorage();
+            renderWordList();
+            updateStats();
+            bulkAddTextarea.value = '';
+            // Removed showModal(`Đã thêm ${addedCount} từ. Đã bỏ qua ${skippedCount} từ.`);
+        });
+
+        // Edit word
+        const editWord = (wordId) => {
+            const wordToEdit = appState.words.find(word => word.id === wordId);
+            if (!wordToEdit) return;
+
+            showModal('Sửa từ vựng:', [
+                {
+                    text: 'Lưu',
+                    callback: () => {
+                        const updatedTerm = document.getElementById('modal-edit-term').value.trim();
+                        const updatedSynonyms = document.getElementById('modal-edit-synonyms').value.trim().split(',').map(s => s.trim()).filter(s => s !== '');
+                        const updatedMeaning = document.getElementById('modal-edit-meaning').value.trim();
+                        const updatedTopicId = document.getElementById('modal-edit-topic').value;
+
+                        if (!updatedTerm || !updatedMeaning) {
+                            showModal('Từ và Nghĩa không được để trống.');
+                            return;
+                        }
+
+                        // Check for duplicate word in the same topic (excluding itself)
+                        if (appState.words.some(word => word.topicId === updatedTopicId && word.term.toLowerCase() === updatedTerm.toLowerCase() && word.id !== wordId)) {
+                            showModal(`Từ "${updatedTerm}" đã tồn tại trong chủ đề này.`);
+                            return;
+                        }
+
+                        wordToEdit.term = updatedTerm;
+                        wordToEdit.synonyms = updatedSynonyms;
+                        wordToEdit.meaning = updatedMeaning;
+                        wordToEdit.topicId = updatedTopicId;
+                        saveDataToLocalStorage();
+                        renderWordList();
+                        updateStats();
+                        showModal(`Đã cập nhật từ "${updatedTerm}".`);
+                    },
+                    style: 'bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg'
+                },
+                {
+                    text: 'Hủy',
+                    callback: () => {},
+                    style: 'bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg'
+                }
+            ]);
+
+            // Dynamically add input fields to the modal
+            const modalContentDiv = document.createElement('div');
+            modalContentDiv.innerHTML = `
+                <div class="mb-4">
+                    <label for="modal-edit-term" class="block text-gray-300 text-sm font-bold mb-2">Từ (tiếng Anh):</label>
+                    <input type="text" id="modal-edit-term" class="w-full p-2 rounded-lg bg-gray-700 text-gray-200 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-green-500" value="${wordToEdit.term}">
+                </div>
+                <div class="mb-4">
+                    <label for="modal-edit-synonyms" class="block text-gray-300 text-sm font-bold mb-2">Từ đồng nghĩa (cách nhau bởi dấu phẩy):</label>
+                    <input type="text" id="modal-edit-synonyms" class="w-full p-2 rounded-lg bg-gray-700 text-gray-200 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-green-500" value="${wordToEdit.synonyms.join(', ')}">
+                </div>
+                <div class="mb-4">
+                    <label for="modal-edit-meaning" class="block text-gray-300 text-sm font-bold mb-2">Nghĩa (tiếng Việt):</label>
+                    <textarea id="modal-edit-meaning" class="w-full p-2 rounded-lg bg-gray-700 text-gray-200 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-green-500" rows="2">${wordToEdit.meaning}</textarea>
+                </div>
+                <div class="mb-4">
+                    <label for="modal-edit-topic" class="block text-gray-300 text-sm font-bold mb-2">Chủ đề:</label>
+                    <select id="modal-edit-topic" class="w-full p-2 rounded-lg bg-gray-700 text-gray-200 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-green-500">
+                    </select>
+                </div>
+            `;
+            modalMessage.after(modalContentDiv);
+
+            const topicSelectInModal = document.getElementById('modal-edit-topic');
+            appState.topics.forEach(topic => {
+                const option = document.createElement('option');
+                option.value = topic.id;
+                option.textContent = topic.name;
+                topicSelectInModal.appendChild(option);
+            });
+            topicSelectInModal.value = wordToEdit.topicId;
+        };
+
+        // Delete word
+        const deleteWord = (wordId) => {
+            showModal('Bạn có chắc chắn muốn xóa từ này?', [
+                {
+                    text: 'Xóa',
+                    callback: () => {
+                        appState.words = appState.words.filter(word => word.id !== wordId);
+                        saveDataToLocalStorage();
+                        renderWordList();
+                        updateStats();
+                        showModal('Đã xóa từ.');
+                    },
+                    style: 'bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg'
+                },
+                {
+                    text: 'Hủy',
+                    callback: () => {},
+                    style: 'bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg'
+                }
+            ]);
+        };
+
+        // Flashcard logic
+        cardContainer.addEventListener('click', () => {
+            cardContainer.classList.toggle('is-flipped');
+        });
+
+        // The change event listener for flashcardTopicSelect is now handled by renderMultiTopicCheckboxes
+        // flashcardTopicSelect.addEventListener('change', (e) => {
+        //     appState.selectedFlashcardTopicIds = Array.from(e.target.selectedOptions).map(option => option.value);
+        //     prepareFlashcards();
+        // });
+
+        reviewAgainBtn.addEventListener('click', () => {
+            prepareFlashcards(true); // Force review all words in the selected topic
+        });
+
+        // New: Flashcard Next button logic
+        flashcardNextBtn.addEventListener('click', () => {
+            // Do not update spaced repetition data when just skipping
+            appState.currentFlashcardIndex++;
+            if (appState.currentFlashcardIndex < appState.flashcards.length) {
+                renderFlashcard();
+            } else {
+                flashcardStatus.textContent = 'Bạn đã hoàn thành tất cả flashcard trong phiên này!';
+                cardContainer.classList.add('hidden');
+                cardControls.classList.add('hidden');
+                flashcardNextBtn.classList.add('hidden'); // Hide next button at the end
+            }
+        });
+
+        // Spaced Repetition System (SM-2 algorithm simplified)
+        const calculateNextReview = (word, quality) => {
+            let { interval, repetitions, easeFactor } = word;
+
+            if (quality >= 3) { // Correct answer (Khá, Tốt, Dễ)
+                if (repetitions === 0) {
+                    interval = 1;
+                } else if (repetitions === 1) {
+                    interval = 6;
+                } else {
+                    interval = Math.round(interval * easeFactor);
+                }
+                repetitions++;
+                easeFactor += (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02));
+            } else { // Incorrect answer (not applicable with 3 ratings, but good to keep logic for future expansion)
+                repetitions = 0;
+                interval = 1;
+                easeFactor = Math.max(1.3, easeFactor - 0.2);
+            }
+
+            // Ensure easeFactor doesn't go below 1.3
+            easeFactor = Math.max(1.3, easeFactor);
+
+            const nextReviewDate = new Date();
+            nextReviewDate.setDate(nextReviewDate.getDate() + interval);
+
+            return {
+                interval,
+                repetitions,
+                easeFactor,
+                nextReview: nextReviewDate.toISOString().slice(0, 10),
+                lastReviewed: new Date().toISOString().slice(0, 10)
+            };
+        };
+
+        const rateFlashcard = (rating) => {
+            const currentCard = appState.flashcards[appState.currentFlashcardIndex];
+            if (!currentCard) return;
+
+            const updatedWordData = calculateNextReview(currentCard, rating);
+
+            // Update the word in appState.words
+            const wordIndex = appState.words.findIndex(w => w.id === currentCard.id);
+            if (wordIndex !== -1) {
+                appState.words[wordIndex] = { ...appState.words[wordIndex], ...updatedWordData };
+            }
+
+            updateDailyActivity();
+            updateStreak();
+            saveDataToLocalStorage();
+            updateStats();
+
+            appState.currentFlashcardIndex++;
+            if (appState.currentFlashcardIndex < appState.flashcards.length) {
+                renderFlashcard();
+            } else {
+                flashcardStatus.textContent = 'Bạn đã hoàn thành tất cả flashcard trong phiên này!';
+                cardContainer.classList.add('hidden');
+                cardControls.classList.add('hidden');
+                flashcardNextBtn.classList.add('hidden'); // Hide next button at the end
+                // The reviewAgainBtn is already visible, no need to show a modal here
+            }
+        };
+
+        const prepareFlashcards = (forceReviewAll = false) => {
+            const now = new Date();
+            now.setHours(0, 0, 0, 0); // Consider only the date for review
+
+            let filteredWords = [];
+            const selectedIds = appState.selectedFlashcardTopicIds;
+
+            if (selectedIds.includes('allTopics') || selectedIds.length === 0) { // If 'allTopics' is selected or nothing is selected
+                filteredWords = appState.words;
+            } else {
+                filteredWords = appState.words.filter(word => selectedIds.includes(word.topicId));
+            }
+
+            // Separate words into hard (repetitions 0 or low easeFactor) and easy
+            let hardWords = filteredWords.filter(word => word.repetitions === 0 || word.easeFactor < 2.0);
+            let easyWords = filteredWords.filter(word => word.repetitions > 0 && word.easeFactor >= 2.0);
+
+            // Filter words that are due for review if not forcing all
+            if (!forceReviewAll) {
+                const nowISO = now.toISOString().slice(0, 10);
+                hardWords = hardWords.filter(word => word.nextReview <= nowISO);
+                easyWords = easyWords.filter(word => word.nextReview <= nowISO);
+            }
+
+            // Shuffle both groups independently
+            for (let i = hardWords.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [hardWords[i], hardWords[j]] = [hardWords[j], hardWords[i]];
+            }
+            for (let i = easyWords.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [easyWords[i], easyWords[j]] = [easyWords[j], easyWords[i]];
+            }
+
+            // Concatenate hard words first, then easy words
+            appState.flashcards = [...hardWords, ...easyWords];
+
+            appState.currentFlashcardIndex = 0;
+            renderFlashcard();
+        };
+
+        // Quiz logic
+        const startQuiz = () => { // Defined startQuiz function
+            const selectedIds = appState.selectedQuizTopicIds;
+            const questionCount = parseInt(quizQuestionCountInput.value);
+            const timeLimit = parseInt(quizTimeLimitInput.value);
+
+            let quizWords = [];
+            if (selectedIds.includes('allTopics') || selectedIds.length === 0) { // If 'allTopics' is selected or nothing is selected
+                quizWords = [...appState.words];
+            } else {
+                quizWords = appState.words.filter(word => selectedIds.includes(word.topicId));
+            }
+
+            if (quizWords.length === 0) {
+                showModal('Không có từ nào để tạo bài dò trong chủ đề này.');
+                return;
+            }
+
+            // Shuffle words and pick desired number of questions
+            for (let i = quizWords.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [quizWords[i], quizWords[j]] = [quizWords[j], quizWords[i]];
+            }
+
+            appState.quiz.questions = quizWords.slice(0, Math.min(questionCount, quizWords.length));
+            appState.quiz.currentQuizIndex = 0;
+            appState.quiz.score = 0; // Reset correct score
+            appState.quiz.incorrectScore = 0; // Reset incorrect score
+            appState.quiz.results = []; // Reset results for new quiz
+            appState.quiz.questionCount = questionCount;
+            appState.quiz.timeLimit = timeLimit;
+            appState.quiz.isAnswered = false; // Reset answer state
+
+            quizDisplayArea.classList.remove('hidden');
+            quizResultsArea.classList.add('hidden');
+            startQuizBtn.classList.add('hidden');
+            appState.isQuizActive = true; // Mark quiz as active
+
+            showNextQuizQuestion();
+            updateStats(); // Update stats after starting quiz
+        };
+
+        startQuizBtn.addEventListener('click', startQuiz); // Call the defined function
+
+        const showNextQuizQuestion = () => {
+            if (appState.quiz.currentQuizIndex >= appState.quiz.questions.length) {
+                endQuiz();
+                return;
+            }
+
+            // Clear previous feedback and input
+            quizFeedbackArea.classList.add('hidden');
+            quizFeedbackArea.textContent = '';
+            quizAnswerInput.value = '';
+            quizAnswerInput.disabled = false;
+            submitAnswerBtn.classList.remove('hidden');
+            nextQuestionBtn.classList.add('hidden');
+            appState.quiz.isAnswered = false; // Reset answer state for new question
+
+            const currentQuestion = appState.quiz.questions[appState.quiz.currentQuizIndex];
+            quizMeaningDisplay.textContent = currentQuestion.meaning;
+            // Update progress display to show only incorrect counts
+            quizProgressDisplay.textContent = `Câu: ${appState.quiz.currentQuizIndex + 1}/${appState.quiz.questions.length} | Sai: ${appState.quiz.incorrectScore}`;
+
+            startQuizTimer();
+            quizAnswerInput.focus();
+        };
+
+        const startQuizTimer = () => {
+            clearInterval(appState.quiz.timer);
+            appState.quiz.timeLeft = appState.quiz.timeLimit;
+            quizTimerDisplay.textContent = `${appState.quiz.timeLeft}s`; // Only show number
+
+            appState.quiz.timer = setInterval(() => {
+                appState.quiz.timeLeft--;
+                quizTimerDisplay.textContent = `${appState.quiz.timeLeft}s`; // Only show number
+                if (appState.quiz.timeLeft <= 0) {
+                    clearInterval(appState.quiz.timer);
+                    checkAnswer(true); // Auto-submit if time runs out
+                }
+            }, 1000);
+        };
+
+        const checkAnswer = (timedOut = false) => {
+            if (appState.quiz.isAnswered) return; // Prevent multiple checks
+
+            clearInterval(appState.quiz.timer);
+            quizAnswerInput.disabled = true;
+            submitAnswerBtn.classList.add('hidden');
+            nextQuestionBtn.classList.remove('hidden');
+            appState.quiz.isAnswered = true; // Mark as answered
+
+            const currentQuestion = appState.quiz.questions[appState.quiz.currentQuizIndex];
+            const userAnswer = quizAnswerInput.value.trim().toLowerCase();
+            const correctTerms = [currentQuestion.term.toLowerCase(), ...currentQuestion.synonyms.map(s => s.toLowerCase())];
+            const isCorrect = correctTerms.includes(userAnswer) && !timedOut;
+
+            quizFeedbackArea.classList.remove('hidden');
+            if (isCorrect) {
+                quizFeedbackArea.classList.remove('incorrect');
+                quizFeedbackArea.classList.add('correct');
+                quizFeedbackArea.textContent = 'Chính xác!';
+                appState.quiz.score++;
+                // Update word's spaced repetition data for correct answer
+                const wordIndex = appState.words.findIndex(w => w.id === currentQuestion.id);
+                if (wordIndex !== -1) {
+                    appState.words[wordIndex] = { ...appState.words[wordIndex], ...calculateNextReview(appState.words[wordIndex], 4) }; // Assume quality 4 for correct quiz answer
+                }
+            } else {
+                quizFeedbackArea.classList.remove('correct');
+                quizFeedbackArea.classList.add('incorrect');
+                quizFeedbackArea.textContent = `Sai rồi! Đáp án đúng là: ${currentQuestion.term} (${currentQuestion.synonyms.join(', ') || 'Không có từ đồng nghĩa'})`;
+                appState.quiz.incorrectScore++; // Increment incorrect score
+                // Update word's spaced repetition data for incorrect answer
+                const wordIndex = appState.words.findIndex(w => w.id === currentQuestion.id);
+                if (wordIndex !== -1) {
+                    appState.words[wordIndex] = { ...appState.words[wordIndex], ...calculateNextReview(appState.words[wordIndex], 1) }; // Assume quality 1 for incorrect quiz answer
+                }
+            }
+
+            // Store result for detailed display at the end
+            appState.quiz.results.push({
+                questionMeaning: currentQuestion.meaning, // Use meaning as the question
+                userAnswer: quizAnswerInput.value.trim(),
+                correctAnswer: currentQuestion.term,
+                correctSynonyms: currentQuestion.synonyms, // Store synonyms for full correct answer display
+                isCorrect: isCorrect
+            });
+
+            updateDailyActivity();
+            updateStreak();
+            saveDataToLocalStorage();
+            updateStats();
+            // Update progress display to show only incorrect counts
+            quizProgressDisplay.textContent = `Câu: ${appState.quiz.currentQuizIndex + 1}/${appState.quiz.questions.length} | Sai: ${appState.quiz.incorrectScore}`;
+        };
+
+        submitAnswerBtn.addEventListener('click', () => checkAnswer(false));
+        nextQuestionBtn.addEventListener('click', () => {
+            appState.quiz.currentQuizIndex++;
+            showNextQuizQuestion();
+        });
+        restartQuizBtn.addEventListener('click', startQuiz);
+
+        quizAnswerInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault(); // Prevent default form submission
+                if (!quizAnswerInput.disabled) { // If answer input is enabled (before checking)
+                    checkAnswer(false);
+                } else if (!nextQuestionBtn.classList.contains('hidden')) { // If next button is visible (after checking)
+                    appState.quiz.currentQuizIndex++;
+                    showNextQuizQuestion();
+                }
+            }
+        });
+
+        // Event listeners for manual word input to move focus on Enter
+        newTermInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                newSynonymsInput.focus();
+            }
+        });
+        newSynonymsInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                newMeaningInput.focus();
+            }
+        });
+        newMeaningInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                addWordBtn.click(); // Trigger add word button click
+            }
+        });
+
+
+        const endQuiz = () => {
+            clearInterval(appState.quiz.timer);
+            quizDisplayArea.classList.add('hidden');
+            quizResultsArea.classList.remove('hidden');
+            finalScoreDisplay.textContent = `Bạn đã đúng ${appState.quiz.score} câu và sai ${appState.quiz.incorrectScore} câu.`;
+
+            // Render detailed results
+            detailedQuizResults.innerHTML = ''; // Clear previous results
+            if (appState.quiz.results.length === 0) {
+                detailedQuizResults.textContent = 'Không có kết quả chi tiết.';
+            } else {
+                appState.quiz.results.forEach((result, index) => {
+                    const resultItem = document.createElement('div');
+                    resultItem.className = `quiz-result-item ${result.isCorrect ? 'correct' : 'incorrect'} mb-2`;
+                    const correctDisplay = result.correctSynonyms.length > 0 ? `${result.correctAnswer} (${result.correctSynonyms.join(', ')})` : result.correctAnswer;
+                    resultItem.innerHTML = `
+                        <p class="font-semibold">Câu ${index + 1}: ${result.questionMeaning}</p>
+                        <p>Đáp án của bạn: <span class="font-medium">${result.userAnswer || '[Không trả lời]'}</span></p>
+                        <p>Đáp án đúng: <span class="font-medium">${correctDisplay}</span></p>
+                        <p class="text-sm mt-1">${result.isCorrect ? '<i class="fas fa-check-circle text-green-400 mr-1"></i>Chính xác' : '<i class="fas fa-times-circle text-red-400 mr-1"></i>Sai'}</p>
+                    `;
+                    detailedQuizResults.appendChild(resultItem);
+                });
+            }
+            appState.isQuizActive = false; // Quiz ended
+        };
+
+        // Cheating detection (out-tab)
+        document.addEventListener('visibilitychange', () => {
+            console.log('Visibility changed. Document hidden:', document.hidden, 'Quiz Active:', appState.isQuizActive); // Debugging line
+            if (appState.isQuizActive) {
+                if (document.hidden) {
+                    // User tabbed out, restart quiz
+                    clearInterval(appState.quiz.timer);
+                    cheatingModalTitle.textContent = 'Bài dò sẽ bắt đầu lại!';
+                    cheatingModalMessage.textContent = 'Bạn đã chuyển ra khỏi tab hoặc thu nhỏ cửa sổ. Vui lòng quay lại để bắt đầu lại bài dò.';
+                    cheatingModal.style.display = 'flex';
+                    startQuiz(); // Call startQuiz to reset and begin a new quiz immediately.
+                } else {
+                    // User returned, hide warning modal
+                    cheatingModal.style.display = 'none';
+                }
+            }
+        });
+
+        // Calendar navigation
+        prevMonthBtn.addEventListener('click', () => {
+            appState.currentCalendarDate.setMonth(appState.currentCalendarDate.getMonth() - 1);
+            renderCalendar();
+        });
+
+        nextMonthBtn.addEventListener('click', () => {
+            appState.currentCalendarDate.setMonth(appState.currentCalendarDate.getMonth() + 1);
+            renderCalendar();
+        });
+
+        // --- INITIALIZATION ---
+        document.addEventListener('DOMContentLoaded', () => {
+            loadDataFromLocalStorage(); // Load data from localStorage
+            setupCardControls(); // Setup flashcard rating buttons
+            renderUI(); // Initial render
+        });
+
+        // Function to render the UI after initial data load
+        const renderUI = () => {
+            switchView('vocab'); // Default to vocab view
+            renderVocabTopicSelect(); // For vocab tab (single select)
+            renderFlashcardTopicCheckboxes(); // For flashcard tab (checkboxes)
+            renderQuizTopicCheckboxes(); // For quiz tab (checkboxes)
+            renderWordList();
+            prepareFlashcards();
+            renderCalendar();
+            updateStats();
+        };
+    </script>
+</body>
+</html>
